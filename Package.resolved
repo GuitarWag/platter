@@ -1,0 +1,14 @@
+{
+  "pins" : [
+    {
+      "identity" : "libsql-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/tursodatabase/libsql-swift",
+      "state" : {
+        "revision" : "f2944a4ea93a20f7d9afcf2913cd4e391e57cd79",
+        "version" : "0.3.2"
+      }
+    }
+  ],
+  "version" : 2
+}

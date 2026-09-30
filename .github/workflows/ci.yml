@@ -1,0 +1,19 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Build
+        run: swift build -c release
+      # The audio tests render the graph offline, so they need no sound device.
+      # The network and real-track tests skip unless their environment variables are set.
+      - name: Test
+        run: swift test
