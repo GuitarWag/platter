@@ -1,5 +1,7 @@
 # Platter
 
+![Platter: two turntables, the mixer, and the library](docs/screenshot.png)
+
 A two-deck DJ rig for macOS, built in SwiftUI. Load YouTube playlists or your own audio
 files, and mix on two turntables with a club mixer: beat grids, sync, loops, hot cues,
 filters and effects, headphone cue, recording, and a beatmixing Auto DJ.
