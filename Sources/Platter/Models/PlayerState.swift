@@ -85,13 +85,17 @@ final class PlayerState: ObservableObject {
     var onError: ((String) -> Void)?
     /// The player is about to start. The app model pauses the decks.
     var onWillPlay: (() -> Void)?
+    /// Fires on every change that Now Playing shows: track, play state, position jumps.
+    let changes = PassthroughSubject<Void, Never>()
     /// Off for benchmarks: no play history and no saved queue or settings.
     var recordsHistory = true
     var persists = true
 
     let player: QueuePlayer
-    private unowned let engine: AudioEngine
-    private unowned let library: Library
+    // Strong: the engine and the library never hold the player, so there is no cycle, and
+    // the player's tasks can outlive whoever made it.
+    private let engine: AudioEngine
+    private let library: Library
     private var order: [Int] = []
     /// The entry planned after the current one, while it is being prepared or is ready.
     private var plannedNext: Int?
@@ -192,6 +196,7 @@ final class PlayerState: ObservableObject {
             onWillPlay?()
             player.play()
             isPlaying = true
+            changes.send()
             if recordsHistory { library.logPlayerPlay(p.track) }
             save()
             planNext()
@@ -205,6 +210,7 @@ final class PlayerState: ObservableObject {
             onWillPlay?()
             player.play()
             isPlaying = true
+            changes.send()
             planNext()
         } else if let i = currentIndex ?? order.first {
             play(index: i)
@@ -214,15 +220,18 @@ final class PlayerState: ObservableObject {
     func pause() {
         player.pause()
         isPlaying = false
+        changes.send()
     }
 
     func stop() {
         player.stop()
         isPlaying = false
+        changes.send()
     }
 
     func seek(to seconds: Double) {
         player.seek(to: seconds)
+        changes.send()
         planNext()
     }
 
@@ -247,6 +256,7 @@ final class PlayerState: ObservableObject {
         guard let n = plannedNext, queue.indices.contains(n) else { return }
         currentIndex = n
         plannedNext = nil
+        changes.send()
         if recordsHistory { library.logPlayerPlay(queue[n].track) }
         save()
         planNext()
@@ -255,6 +265,7 @@ final class PlayerState: ObservableObject {
     /// The last track ended with nothing planned (the next one was not ready, or the end).
     private func ended() {
         isPlaying = false
+        changes.send()
         guard let c = currentIndex,
               let n = QueueOrder.next(after: c, order: order, repeat: prefs.repeatMode, ended: true) else { return }
         play(index: n)

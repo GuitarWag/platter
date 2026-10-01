@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
     let mixer: MixerState
     let autoDJ: AutoDJ
     let player: PlayerState
+    private(set) var nowPlaying: NowPlaying!
     /// The player window, so DJ shortcuts stay out of it.
     weak var playerWindow: NSWindow?
     /// Ask the DJ window to open the player window (used by the player benchmark).
@@ -52,6 +53,7 @@ final class AppModel: ObservableObject {
         self.player = player
         self.error = startError
 
+        nowPlaying = NowPlaying(player: player, library: library)
         // One plays at a time (unless turned off): the player pauses the decks, a deck the player.
         player.onError = { [weak self] in self?.error = $0 }
         player.onWillPlay = { [weak self] in
@@ -82,6 +84,7 @@ final class AppModel: ObservableObject {
                 .store(in: &subscriptions)
         }
         installKeyboardShortcuts()
+        AppDelegate.model = self
         startBenchIfRequested()
         engine.onRestart = { [weak self] in
             self?.deckA.engineRestarted()
@@ -90,6 +93,15 @@ final class AppModel: ObservableObject {
     }
 
     func deck(_ id: DeckID) -> DeckState { id == .a ? deckA : deckB }
+
+    /// Replace the player's queue with an album and play it.
+    func playAlbum(_ id: Int64) {
+        let previous = library.source
+        library.source = .album(id)
+        let tracks = library.tracks
+        library.source = previous
+        player.playAll(tracks)
+    }
 
     /// SYNC on `id`: match its tempo and beat phase to the other deck.
     func sync(_ id: DeckID) {
@@ -218,9 +230,58 @@ final class AppModel: ObservableObject {
     }
 }
 
+/// The Dock menu, and playing on after the last window closes.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor static weak var model: AppModel?
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    @MainActor
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        guard let model = Self.model else { return nil }
+        let p = model.player
+        let menu = NSMenu()
+        if let t = p.current {
+            let now = NSMenuItem(title: "\(t.artist.isEmpty ? "" : t.artist + " - ")\(t.title)", action: nil, keyEquivalent: "")
+            now.isEnabled = false
+            menu.addItem(now)
+        }
+        menu.addItem(DockAction(p.isPlaying ? "Pause" : "Play") { p.togglePlay() })
+        menu.addItem(DockAction("Next") { p.next() })
+        menu.addItem(DockAction("Previous") { p.previous() })
+        let albums = model.library.albums.prefix(5)
+        if !albums.isEmpty {
+            menu.addItem(.separator())
+            let header = NSMenuItem(title: "Play Album", action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for a in albums {
+                menu.addItem(DockAction(a.name) { model.playAlbum(a.id) })
+            }
+        }
+        return menu
+    }
+}
+
+/// A menu item that runs a closure.
+final class DockAction: NSMenuItem {
+    private let run: @MainActor () -> Void
+
+    init(_ title: String, _ run: @escaping @MainActor () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("not used") }
+
+    @MainActor @objc private func fire() { run() }
+}
+
 @main
 struct PlatterApp: App {
     @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
         Window("Platter", id: "dj") {
@@ -237,6 +298,13 @@ struct PlatterApp: App {
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
+
+        MenuBarExtra {
+            MiniPlayerView(model: model)
+        } label: {
+            Image(systemName: model.player.isPlaying ? "music.note" : "music.note.list")
+        }
+        .menuBarExtraStyle(.window)
     }
 }
 

@@ -27,7 +27,7 @@ enum PlayerEQ {
 /// samples rendered since its planned start.
 @MainActor
 final class QueuePlayer {
-    private unowned let engine: AudioEngine
+    private let engine: AudioEngine // the engine does not hold this player
     private let nodes: [AVAudioPlayerNode]
     private let clock: AVAudioNode
 

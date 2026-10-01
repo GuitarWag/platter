@@ -1,5 +1,6 @@
 import XCTest
 import AVFoundation
+import MediaPlayer
 @testable import Platter
 
 final class QueueOrderTests: XCTestCase {
@@ -133,5 +134,67 @@ final class PlayerStateTests: XCTestCase {
         XCTAssertNotEqual(player.queue[2].id, player.queue[3].id)
         player.clear()
         XCTAssertTrue(player.queue.isEmpty)
+    }
+}
+
+@MainActor
+final class NowPlayingTests: XCTestCase {
+    func testInfoFields() {
+        var t = Track(id: "x", title: "Perfect", artist: "Smashing Pumpkins", duration: 202)
+        t.albumNames = "Adore"
+        let info = NowPlaying.info(track: t, position: 61.5, duration: 202, isPlaying: true, album: t.albumNames)
+        XCTAssertEqual(info[MPMediaItemPropertyTitle] as? String, "Perfect")
+        XCTAssertEqual(info[MPMediaItemPropertyArtist] as? String, "Smashing Pumpkins")
+        XCTAssertEqual(info[MPMediaItemPropertyAlbumTitle] as? String, "Adore")
+        XCTAssertEqual(info[MPMediaItemPropertyPlaybackDuration] as? Double, 202)
+        XCTAssertEqual(info[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double, 61.5)
+        XCTAssertEqual(info[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 1)
+        let paused = NowPlaying.info(track: t, position: 0, duration: 202, isPlaying: false, album: nil)
+        XCTAssertEqual(paused[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 0)
+        XCTAssertNil(paused[MPMediaItemPropertyAlbumTitle])
+    }
+
+    func testCommandsDriveThePlayer() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fmt = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!
+        for id in ["local-1", "local-2"] {
+            let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 44_100 * 5)!
+            b.frameLength = b.frameCapacity
+            try AVAudioFile(forWriting: dir.appendingPathComponent("\(id).wav"), settings: fmt.settings).write(from: b)
+        }
+        let db = try LibraryDB(path: ":memory:")
+        let album = try db.createAlbum(name: "a", sourceURL: nil)
+        for id in ["local-1", "local-2"] { try db.addLocalTrack(Track(id: id, title: id), fileName: "\(id).wav", size: 1, to: album) }
+        let library = Library(db: db, audioDirectory: dir)
+        let engine = AudioEngine(offline: fmt)
+        try engine.start()
+        let player = PlayerState(engine: engine, library: library)
+        player.recordsHistory = false
+        player.persists = false
+        let np = NowPlaying(player: player, library: library)
+
+        XCTAssertFalse(np.handle(.toggle), "nothing queued")
+        library.source = .album(album)
+        player.enqueue(library.tracks)
+        XCTAssertTrue(np.handle(.play))
+        for _ in 0..<50 where !player.isPlaying { _ = try engine.renderOffline(seconds: 0.01); try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertTrue(player.isPlaying)
+        XCTAssertEqual(player.current?.id, "local-1")
+        np.handle(.pause)
+        XCTAssertFalse(player.isPlaying)
+        np.handle(.seek(2.5))
+        XCTAssertEqual(player.position, 2.5, accuracy: 0.05)
+        np.handle(.next)
+        for _ in 0..<50 where player.current?.id != "local-2" || !player.isPlaying {
+            _ = try engine.renderOffline(seconds: 0.01); try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(player.current?.id, "local-2")
+        np.handle(.previous) // within 3 s: back to the first track
+        for _ in 0..<50 where player.current?.id != "local-1" {
+            _ = try engine.renderOffline(seconds: 0.01); try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(player.current?.id, "local-1")
     }
 }

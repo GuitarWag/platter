@@ -649,3 +649,55 @@ private struct PlaylistRow: View {
         .contentShape(Rectangle())
     }
 }
+
+// MARK: Menu bar
+
+/// The menu bar mini player: the track, its art, and the transport.
+struct MiniPlayerView: View {
+    let model: AppModel
+    @ObservedObject private var player: PlayerState
+    @Environment(\.openWindow) private var openWindow
+    @State private var art: NSImage?
+
+    init(model: AppModel) {
+        self.model = model
+        player = model.player
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Group {
+                    if let art { Image(nsImage: art).resizable().scaledToFill() } else { LCD.screen }
+                }
+                .frame(width: 48, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.current?.title ?? "Nothing playing").font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    Text(player.current?.artist ?? "Platter").font(.system(size: 11)).foregroundColor(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 18) {
+                Button { player.previous() } label: { Image(systemName: "backward.end.fill") }.accessibilityLabel("Previous")
+                Button { player.togglePlay() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 20)) }
+                    .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
+                Button { player.next() } label: { Image(systemName: "forward.end.fill") }.accessibilityLabel("Next")
+            }
+            .buttonStyle(.borderless)
+            Divider()
+            HStack {
+                Button("Open Player") { openWindow(id: "player"); NSApp.activate() }
+                Spacer()
+                Button("Open DJ") { openWindow(id: "dj"); NSApp.activate() }
+            }
+            .controlSize(.small)
+        }
+        .padding(12)
+        .frame(width: 280)
+        .task(id: player.current?.id) {
+            art = nil
+            if let t = player.current { art = await Artwork.image(for: t, audioDirectory: model.library.audioDirectory) }
+        }
+    }
+}
