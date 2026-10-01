@@ -279,10 +279,11 @@ private struct LEDMeter: View {
     private static let thresholds: [Float] = [-36, -30, -24, -20, -16, -12, -9, -6, -4, -2, -1, 0]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active)) { timeline in
             // A Canvas, not a stack of shapes: redrawing it does not trigger a layout pass.
             // The segments fit the height the meter gets.
             Canvas { ctx, size in
+                _ = timeline.date // redraw on each tick (see ZoomWaveform)
                 let db = active ? 20 * log10(max(meter.level, 1e-5)) : -100
                 let step = min(compact ? 4 : 9, size.height / CGFloat(Self.thresholds.count))
                 let top = size.height - step * CGFloat(Self.thresholds.count)

@@ -7,8 +7,9 @@ struct OverviewWaveform: View {
 
     var body: some View {
         GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !state.isPlaying)) { _ in
+            TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !state.isPlaying)) { timeline in
                 Canvas { ctx, size in
+                    _ = timeline.date // see ZoomWaveform
                     let dur = state.duration
                     let progress = dur > 0 ? CGFloat(state.position / dur) : 0
                     let peaks = state.track?.peaks ?? []
@@ -80,8 +81,12 @@ struct ZoomWaveform: View {
     var window: Double = 8
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !state.isPlaying)) { _ in
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !state.isPlaying)) { timeline in
             Canvas { ctx, size in
+                // SwiftUI redraws a Canvas only when the view value changes. The live values
+                // (position, levels) are read inside, so the drawing must also read the
+                // timeline date, or the canvas does not redraw on each tick.
+                _ = timeline.date
                 let mid = size.height / 2
                 let center = size.width / 2
                 let color = Theme.deck(state.deck)
@@ -136,6 +141,7 @@ struct ZoomWaveform: View {
                 ctx.fill(Path(CGRect(x: center - 1, y: 0, width: 2, height: size.height)), with: .color(.white))
             }
         }
+        .drawingGroup()
         .background(Color.black.opacity(0.55))
     }
 }
