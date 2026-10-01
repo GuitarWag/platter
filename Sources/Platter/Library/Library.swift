@@ -90,8 +90,13 @@ final class Library: ObservableObject {
         return rows
     }
 
-    init(db: LibraryDB) {
+    /// Where downloads and imported files live.
+    let audioDirectory: URL
+
+    /// `audioDirectory` is for tests: they use a temp folder, never the user's library.
+    init(db: LibraryDB, audioDirectory: URL = AppPaths.audio) {
         self.db = db
+        self.audioDirectory = audioDirectory
         importLegacyLibraryIfNeeded()
         removeStaleDownloadFiles()
         albums = (try? db.albums()) ?? []
@@ -245,7 +250,7 @@ final class Library: ObservableObject {
     /// when it is next loaded.
     func deleteDownload(_ track: Track) {
         if let name = track.fileName {
-            try? FileManager.default.removeItem(at: AppPaths.audio.appendingPathComponent(name))
+            try? FileManager.default.removeItem(at: audioDirectory.appendingPathComponent(name))
         }
         attempt { try db.clearDownload(track.id) }
         reload()
@@ -277,12 +282,14 @@ final class Library: ObservableObject {
                 let a = try await Task.detached(priority: .userInitiated) { try Analysis.analyze(url: url) }.value
                 attempt {
                     try db.setAnalysis(track.id, duration: a.duration, bpm: a.bpm, peaks: a.peaks, wave: a.wave,
-                                       beatOffset: a.grid?.firstBeat, key: a.key?.name, version: Analysis.version)
+                                       beatOffset: a.grid?.firstBeat, key: a.key?.name, loudness: a.loudness,
+                                       version: Analysis.version)
                 }
                 t.duration = a.duration
                 t.bpm = a.bpm
                 t.beatOffset = a.grid?.firstBeat
                 t.key = a.key?.name
+                t.loudness = a.loudness
                 t.peaks = a.peaks
                 t.wave = a.wave
                 reload()
@@ -299,17 +306,17 @@ final class Library: ObservableObject {
     /// The downloaded audio file of a track, downloading it first when needed.
     func audioFile(for track: Track) async throws -> URL {
         if let name = try? db.track(track.id)?.fileName {
-            let url = AppPaths.audio.appendingPathComponent(name)
+            let url = audioDirectory.appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: url.path) { return url }
             attempt { try db.clearDownload(track.id) } // the file was deleted outside the app
         }
         if track.isLocal {
-            throw LibraryError("The imported file for \"\(track.title)\" is missing from \(AppPaths.audio.path).")
+            throw LibraryError("The imported file for \"\(track.title)\" is missing from \(audioDirectory.path).")
         }
         if let running = downloads[track.id] {
-            return AppPaths.audio.appendingPathComponent(try await running.value)
+            return audioDirectory.appendingPathComponent(try await running.value)
         }
-        let task = Task { try await YTDLP.download(id: track.id, into: AppPaths.audio) }
+        let task = Task { try await YTDLP.download(id: track.id, into: audioDirectory) }
         downloads[track.id] = task
         activity[track.id] = "Downloading…"
         defer {
@@ -317,7 +324,7 @@ final class Library: ObservableObject {
             activity[track.id] = nil
         }
         let name = try await task.value
-        let url = AppPaths.audio.appendingPathComponent(name)
+        let url = audioDirectory.appendingPathComponent(name)
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64 ?? 0
         attempt { try db.setDownload(track.id, fileName: name, size: size) }
         reload()
@@ -333,6 +340,31 @@ final class Library: ObservableObject {
     func logPlay(_ track: Track, deck: DeckID) {
         attempt { try db.addHistory(track.id, deck: deck.label) }
         historyChanged()
+    }
+
+    /// A play in the music player.
+    func logPlayerPlay(_ track: Track) {
+        attempt { try db.addHistory(track.id, deck: "Player", source: "player") }
+        historyChanged()
+    }
+
+    func setRating(_ track: Track, _ rating: Int) {
+        attempt { try db.setRating(track.id, rating) }
+        reload()
+    }
+
+    // MARK: Player storage
+
+    func playerQueue() -> [Track] { (try? db.playerQueue()) ?? [] }
+
+    func savePlayerQueue(_ ids: [String]) {
+        attempt { try db.savePlayerQueue(ids) }
+    }
+
+    func setting(_ key: String) -> String? { (try? db.setting(key)) ?? nil }
+
+    func setSetting(_ key: String, _ value: String?) {
+        attempt { try db.setSetting(key, value) }
     }
 
     private func historyChanged() {
@@ -375,11 +407,13 @@ final class Library: ObservableObject {
 
     /// Copy audio files into the library. They go into the selected album when it is one you
     /// made, else into "Local Files". Title and artist come from the file's tags, or its name.
-    func importFiles(_ urls: [URL]) async {
+    /// Returns the imported tracks. `select` shows their album afterwards.
+    @discardableResult
+    func importFiles(_ urls: [URL], select: Bool = true) async -> [Track] {
         let files = urls.filter { Self.importableTypes.contains($0.pathExtension.lowercased()) }
         guard !files.isEmpty else {
             error = "No audio files to import. Supported: \(Self.importableTypes.joined(separator: ", "))."
-            return
+            return []
         }
         let target: Int64
         do {
@@ -392,27 +426,30 @@ final class Library: ObservableObject {
             }
         } catch {
             self.error = "Import: \(error)"
-            return
+            return []
         }
         var failed: [String] = []
+        var imported: [Track] = []
         for url in files {
             do {
                 let meta = try await Self.readTags(url)
                 let id = Track.localPrefix + UUID().uuidString.prefix(13).lowercased()
                 let name = "\(id).\(url.pathExtension.lowercased())"
-                let dest = AppPaths.audio.appendingPathComponent(name)
+                let dest = audioDirectory.appendingPathComponent(name)
                 try FileManager.default.copyItem(at: url, to: dest)
                 _ = try AVAudioFile(forReading: dest) // the decoder can read it
                 let size = (try? FileManager.default.attributesOfItem(atPath: dest.path))?[.size] as? Int64 ?? 0
-                try db.addLocalTrack(Track(id: id, title: meta.title, artist: meta.artist, duration: meta.duration),
-                                     fileName: name, size: size, to: target)
+                let track = Track(id: id, title: meta.title, artist: meta.artist, duration: meta.duration)
+                try db.addLocalTrack(track, fileName: name, size: size, to: target)
+                if let t = try db.track(id) { imported.append(t) }
             } catch {
                 failed.append(url.lastPathComponent)
             }
         }
         if !failed.isEmpty { error = "Could not import: \(failed.joined(separator: ", "))" }
         reload()
-        source = .album(target)
+        if select { source = .album(target) }
+        return imported
     }
 
     /// `source_url` of the "Local Files" album, so imports find it again.
@@ -439,7 +476,7 @@ final class Library: ObservableObject {
         let json = AppPaths.legacyJSON
         guard let data = try? Data(contentsOf: json) else { return }
         attempt {
-            try db.importLegacyJSON(data, audioDirectory: AppPaths.audio)
+            try db.importLegacyJSON(data, audioDirectory: audioDirectory)
             try FileManager.default.moveItem(at: json, to: json.appendingPathExtension("imported"))
         }
     }
@@ -448,9 +485,9 @@ final class Library: ObservableObject {
     /// downloads, and source files that never became m4a.
     private func removeStaleDownloadFiles() {
         let fm = FileManager.default
-        guard let names = try? fm.contentsOfDirectory(atPath: AppPaths.audio.path) else { return }
+        guard let names = try? fm.contentsOfDirectory(atPath: audioDirectory.path) else { return }
         for name in names where name.hasPrefix(".tmp-") || name.hasSuffix(".part") || name.hasSuffix(".webm") {
-            try? fm.removeItem(at: AppPaths.audio.appendingPathComponent(name))
+            try? fm.removeItem(at: audioDirectory.appendingPathComponent(name))
         }
     }
 

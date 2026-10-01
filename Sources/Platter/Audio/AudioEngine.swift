@@ -54,6 +54,13 @@ final class AudioEngine {
         componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
         componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
     private let recorder = Recorder()
+
+    // The music player's chain: two player nodes (one track ends as the next starts, for
+    // gapless playback and crossfades) -> pre-mix -> 10-band EQ -> player mixer -> main.
+    private let playerNodes = [AVAudioPlayerNode(), AVAudioPlayerNode()]
+    private let playerPre = AVAudioMixerNode()
+    private let playerEQ = AVAudioUnitEQ(numberOfBands: PlayerEQ.frequencies.count)
+    private let playerMix = AVAudioMixerNode()
     /// When the current recording started, and where it goes.
     private(set) var recording: (started: Date, url: URL)?
 
@@ -114,6 +121,24 @@ final class AudioEngine {
             Self.installMeter(on: d.high, meter: meters[deck]!, cue: cue.feeds[deck]!)
             decks[deck] = d
         }
+        for node in playerNodes {
+            engine.attach(node)
+        }
+        [playerPre, playerEQ, playerMix].forEach(engine.attach)
+        for (bus, node) in playerNodes.enumerated() {
+            engine.connect(node, to: playerPre, fromBus: 0, toBus: bus, format: nil)
+        }
+        engine.connect(playerPre, to: playerEQ, format: nil)
+        engine.connect(playerEQ, to: playerMix, format: nil)
+        engine.connect(playerMix, to: engine.mainMixerNode, format: nil)
+        for (band, freq) in zip(playerEQ.bands, PlayerEQ.frequencies) {
+            band.filterType = .parametric
+            band.frequency = freq
+            band.bandwidth = 1
+            band.gain = 0
+            band.bypass = true
+        }
+
         // main -> limiter -> output, at the output's format.
         let outFormat = engine.outputNode.inputFormat(forBus: 0)
         engine.attach(limiter)
@@ -255,6 +280,29 @@ final class AudioEngine {
         d.echo.wetDryMix = 55 * a
         d.reverb.bypass = fx != .reverb || a == 0
         d.reverb.wetDryMix = 65 * a
+    }
+
+    // MARK: Music player
+
+    /// The music player, bound to the player chain. `clock` is the pre-mix node, which
+    /// renders all the time, so its render time is the player's clock.
+    func queuePlayer() -> QueuePlayer {
+        QueuePlayer(engine: self, nodes: playerNodes, clock: playerPre)
+    }
+
+    func setPlayerVolume(_ v: Double) { playerMix.outputVolume = Float(min(1, max(0, v))) }
+
+    /// -1 (left) ... 1 (right).
+    func setPlayerBalance(_ b: Double) { playerMix.pan = Float(min(1, max(-1, b))) }
+
+    /// Graphic EQ gains in dB (one per `PlayerEQ.frequencies`) and the preamp. A band at 0 dB,
+    /// or the whole EQ when off, is bypassed and costs nothing.
+    func setPlayerEQ(gains: [Double], preamp: Double, enabled: Bool) {
+        for (band, g) in zip(playerEQ.bands, gains) {
+            band.gain = Float(min(12, max(-12, g)))
+            band.bypass = !enabled || g == 0
+        }
+        playerEQ.globalGain = enabled ? Float(min(12, max(-12, preamp))) : 0
     }
 
     func setMasterLevel(_ level: Double) {

@@ -350,7 +350,7 @@ struct LibraryBrowser: View {
         if track.isCached {
             if let name = track.fileName {
                 Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([AppPaths.audio.appendingPathComponent(name)])
+                    NSWorkspace.shared.activateFileViewerSelecting([library.audioDirectory.appendingPathComponent(name)])
                 }
             }
             if !track.isLocal {

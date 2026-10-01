@@ -250,7 +250,11 @@ final class DeckState: ObservableObject {
         isPlaying ? pause() : play()
     }
 
+    /// Called on every start. The app model pauses the music player.
+    var onPlay: (() -> Void)?
+
     func play() {
+        if !isPlaying { onPlay?() }
         player.play()
         isPlaying = player.isPlaying
         if isPlaying, !playLogged, let t = track {

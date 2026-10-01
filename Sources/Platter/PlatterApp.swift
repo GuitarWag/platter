@@ -12,6 +12,9 @@ final class AppModel: ObservableObject {
     let deckB: DeckState
     let mixer: MixerState
     let autoDJ: AutoDJ
+    let player: PlayerState
+    /// The player window, so DJ shortcuts stay out of it.
+    weak var playerWindow: NSWindow?
 
     @Published var error: String?
     private var subscriptions: Set<AnyCancellable> = []
@@ -43,9 +46,23 @@ final class AppModel: ObservableObject {
         self.deckB = deckB
         self.mixer = mixer
         self.autoDJ = AutoDJ(deckA: deckA, deckB: deckB, mixer: mixer, library: library)
+        let player = PlayerState(engine: engine, library: library)
+        self.player = player
         self.error = startError
 
+        // One plays at a time (unless turned off): the player pauses the decks, a deck the player.
+        player.onError = { [weak self] in self?.error = $0 }
+        player.onWillPlay = { [weak self] in
+            guard let self, self.player.prefs.exclusive else { return }
+            self.autoDJ.stop()
+            self.deckA.pause()
+            self.deckB.pause()
+        }
         for deck in [deckA, deckB] {
+            deck.onPlay = { [weak self] in
+                guard let self, self.player.prefs.exclusive else { return }
+                self.player.pause()
+            }
             deck.onError = { [weak self] in self?.error = $0 }
             deck.onCueChanged = { [weak library] in library?.saveCue(trackID: $0, slot: $1, seconds: $2) }
             deck.onFirstPlay = { [weak library, weak deck] t in
@@ -86,6 +103,9 @@ final class AppModel: ObservableObject {
             guard let self, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
                   !(NSApp.keyWindow?.firstResponder is NSTextView),
                   let key = event.charactersIgnoringModifiers?.lowercased() else { return event }
+            if let w = NSApp.keyWindow, w === self.playerWindow {
+                return self.handlePlayerKey(key, code: event.keyCode, down: event.type == .keyDown) ? nil : event
+            }
             return self.handleKey(key, down: event.type == .keyDown, isRepeat: event.isARepeat) ? nil : event
         }
     }
@@ -110,6 +130,22 @@ final class AppModel: ObservableObject {
         ]
         guard let action = actions[key] else { return false }
         if down, !isRepeat { action() }
+        return true
+    }
+
+    /// The player window's keys: the classic Z X C V B, space, arrows to seek and set volume.
+    private func handlePlayerKey(_ key: String, code: UInt16, down: Bool) -> Bool {
+        let p = player
+        let byCode: [UInt16: () -> Void] = [
+            123: { p.seek(to: p.position - 5) }, 124: { p.seek(to: p.position + 5) },
+            126: { p.prefs.volume = min(1, p.prefs.volume + 0.05) }, 125: { p.prefs.volume = max(0, p.prefs.volume - 0.05) },
+        ]
+        let byKey: [String: () -> Void] = [
+            "z": { p.previous() }, "x": { p.isPlaying ? p.seek(to: 0) : p.togglePlay() },
+            "c": { p.togglePlay() }, "v": { p.stop() }, "b": { p.next() }, " ": { p.togglePlay() },
+        ]
+        guard let action = byCode[code] ?? byKey[key] else { return false }
+        if down { action() }
         return true
     }
 
@@ -164,13 +200,32 @@ struct PlatterApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup {
+        Window("Platter", id: "dj") {
             PlatterRootView(model: model)
                 .frame(minWidth: 1240, minHeight: 800)
                 .preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified)
+        .commands { ModeCommands() }
+
+        Window("Platter Player", id: "player") {
+            PlayerWindowView(model: model)
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+    }
+}
+
+/// ⌘1 opens the DJ rig, ⌘2 the music player. Both share the engine and the library.
+struct ModeCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandMenu("Mode") {
+            Button("DJ") { openWindow(id: "dj") }.keyboardShortcut("1")
+            Button("Player") { openWindow(id: "player") }.keyboardShortcut("2")
+        }
     }
 }
 

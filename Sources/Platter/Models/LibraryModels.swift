@@ -13,6 +13,11 @@ struct Track: Identifiable, Equatable {
     var beatOffset: Double?
     /// Key name, "Am" or "F#".
     var key: String?
+    /// Average level (dBFS RMS over the parts that are not silent), for volume leveling.
+    var loudness: Double?
+    /// 0 (none) ... 5 stars.
+    var rating = 0
+    var playCount = 0
     /// Waveform peaks. Loaded only for a track on a deck, never for list rows.
     var peaks: [Float]?
     /// Detail waveform, `Analysis.waveRate` buckets per second. Loaded only for a deck.
@@ -64,8 +69,14 @@ struct TrackFilter: Equatable, Hashable {
     /// Key name ("Am"); matches tracks whose key mixes with it on the Camelot wheel.
     var compatibleKey: String?
     var downloadedOnly = false
+    /// At least this many stars.
+    var minRating: Int?
+    /// Played at least this many times.
+    var minPlays: Int?
 
-    var isEmpty: Bool { minBPM == nil && maxBPM == nil && compatibleKey == nil && !downloadedOnly }
+    var isEmpty: Bool {
+        minBPM == nil && maxBPM == nil && compatibleKey == nil && !downloadedOnly && minRating == nil && minPlays == nil
+    }
 
     func matches(_ t: Track) -> Bool {
         if downloadedOnly, !t.isCached { return false }
@@ -74,6 +85,8 @@ struct TrackFilter: Equatable, Hashable {
             if let lo = minBPM, bpm < lo { return false }
             if let hi = maxBPM, bpm > hi { return false }
         }
+        if let r = minRating, t.rating < r { return false }
+        if let p = minPlays, t.playCount < p { return false }
         if let k = compatibleKey.flatMap(MusicalKey.init(name:)) {
             guard let tk = t.musicalKey, tk.isCompatible(with: k) else { return false }
         }

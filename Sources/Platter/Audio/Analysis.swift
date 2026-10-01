@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import Accelerate
 
 /// One-time analysis of a downloaded track: duration, BPM, and waveform peaks. The result is
 /// stored in the database, so a track is analyzed only once.
@@ -12,11 +13,13 @@ enum Analysis {
         let wave: [Float]
         let grid: BeatGrid?
         let key: MusicalKey?
+        /// dBFS RMS over the 50 ms blocks above -60 dBFS (silence does not lower it).
+        let loudness: Double?
     }
 
     /// Bumped when the analysis changes. Tracks analyzed by an older version are analyzed
-    /// again on their next load. 2 = beat grid and key.
-    static let version = 2
+    /// again on their next load. 2 = beat grid and key. 3 = loudness.
+    static let version = 3
 
     /// Buckets per second of `Result.wave`.
     static let waveRate: Double = 100
@@ -53,7 +56,23 @@ enum Analysis {
                       peaks: PeakTable.peaks(from: mono),
                       wave: wave(from: mono, sampleRate: format.sampleRate),
                       grid: grid,
-                      key: MusicalKey.detect(mono: mono, sampleRate: format.sampleRate))
+                      key: MusicalKey.detect(mono: mono, sampleRate: format.sampleRate),
+                      loudness: loudness(mono, sampleRate: format.sampleRate))
+    }
+
+    /// Average loudness in dBFS RMS, over 50 ms blocks louder than -60 dBFS.
+    static func loudness(_ mono: [Float], sampleRate: Double) -> Double? {
+        let block = max(1, Int(sampleRate * 0.05))
+        var sum = 0.0, count = 0
+        var i = 0
+        while i + block <= mono.count {
+            var ms: Float = 0
+            mono.withUnsafeBufferPointer { vDSP_measqv($0.baseAddress! + i, 1, &ms, vDSP_Length(block)) }
+            if ms > 1e-6 { sum += Double(ms); count += 1 } // -60 dBFS
+            i += block
+        }
+        guard count > 0 else { return nil }
+        return 10 * log10(sum / Double(count))
     }
 
     /// Peak per exactly `sampleRate / waveRate` frames, so bucket `k` starts at `k / waveRate`

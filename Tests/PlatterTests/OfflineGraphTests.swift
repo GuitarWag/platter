@@ -198,6 +198,60 @@ final class OfflineGraphTests: XCTestCase {
         XCTAssertLessThan(off, 1e-5)
     }
 
+    /// Render in 10 ms chunks and let the player's monitor task run between them, like the
+    /// real-time engine does.
+    private func renderPlayer(_ engine: AudioEngine, seconds: Double) async throws -> [Float] {
+        var out: [Float] = []
+        for _ in 0..<Int(seconds / 0.01) {
+            out += samples(try engine.renderOffline(seconds: 0.01), 0, 0.01)
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        return out
+    }
+
+    func testPlayerIsGapless() async throws {
+        let one = try wav("one", seconds: 1) { 0.5 * sin(2 * .pi * 1000 * Float($0) / 44_100) }
+        let two = try wav("two", seconds: 1) { 0.5 * sin(2 * .pi * 1000 * Float($0) / 44_100) }
+        let (engine, _, _) = rig()
+        let player = engine.queuePlayer()
+        var advanced = 0
+        player.onAdvance = { advanced += 1 }
+        try player.load(one)
+        player.setNext(two)
+        player.play()
+        let x = try await renderPlayer(engine, seconds: 2.2)
+        // 2 ms windows from the first sound to the end of the second track: never silent.
+        let first = x.firstIndex { abs($0) > 0.01 } ?? 0
+        var quietest: Float = 1
+        for w in stride(from: first, to: first + Int(1.98 * sr), by: Int(0.002 * sr)) {
+            quietest = min(quietest, rms(Array(x[w..<min(x.count, w + Int(0.002 * sr))])))
+        }
+        print("GAPLESS starts at \(Double(first) / sr) s, quietest 2 ms window \(quietest), advanced \(advanced), now \(player.url?.lastPathComponent ?? "-")")
+        XCTAssertGreaterThan(quietest, 0.2, "no gap at the joint")
+        XCTAssertEqual(advanced, 1)
+        XCTAssertEqual(player.url, two)
+    }
+
+    func testPlayerCrossfades() async throws {
+        let low = try wav("low", seconds: 2) { 0.5 * sin(2 * .pi * 440 * Float($0) / 44_100) }
+        let high = try wav("high", seconds: 2) { 0.5 * sin(2 * .pi * 1760 * Float($0) / 44_100) }
+        let (engine, _, _) = rig()
+        let player = engine.queuePlayer()
+        player.crossfade = 0.5
+        try player.load(low)
+        player.setNext(high)
+        player.play()
+        let x = try await renderPlayer(engine, seconds: 3.2)
+        let first = x.firstIndex { abs($0) > 0.01 } ?? 0
+        func at(_ t: Double) -> Double { frequency(Array(x[(first + Int(t * sr))..<(first + Int((t + 0.1) * sr))])) }
+        let before = at(1.2), after = at(2.0)
+        let overlap = rms(Array(x[(first + Int(1.6 * sr))..<(first + Int(1.7 * sr))]))
+        print("XFADE before \(before) Hz, after \(after) Hz, overlap rms \(overlap)")
+        XCTAssertEqual(before, 440, accuracy: 15)
+        XCTAssertEqual(after, 1760, accuracy: 30)
+        XCTAssertGreaterThan(overlap, 0.2, "no dip in the middle of the fade")
+    }
+
     func testScratchThroughTheGraph() async throws {
         let sine = try wav("scratch", seconds: 30) { 0.5 * sin(2 * .pi * 1000 * Float($0) / 44_100) }
         let (engine, a, _) = rig()
