@@ -333,6 +333,15 @@ struct LibraryBrowser: View {
         Button("Load on Deck A") { model.load(track, onto: .a) }
         Button("Load on Deck B") { model.load(track, onto: .b) }
         Divider()
+        Menu("Music Player") {
+            Button("Play in Player") { model.player.playAll([track]) }
+            Button("Play Next") { model.player.enqueue([track], next: true) }
+            Button("Add to Queue") { model.player.enqueue([track]) }
+            Divider()
+            Button("Play This List in Player") { model.player.playAll(library.visibleTracks) }
+        }
+        RatingMenu(rating: track.rating) { library.setRating(track, $0) }
+        Divider()
         Button("Edit title and artist…") {
             titleDraft = track.title
             artistDraft = track.artist
@@ -409,6 +418,7 @@ private enum Col {
     static let time: CGFloat = 44
     static let decks: CGFloat = 74
     static let key: CGFloat = 32
+    static let rating: CGFloat = 52
 }
 
 private struct ColumnHeader: View {
@@ -422,6 +432,7 @@ private struct ColumnHeader: View {
             label("TITLE", .title).frame(maxWidth: .infinity, alignment: .leading)
             label("ARTIST", .artist).frame(maxWidth: .infinity, alignment: .leading)
             if let extraColumn { label(extraColumn, nil).frame(maxWidth: .infinity, alignment: .leading) }
+            label("RATING", .rating).frame(width: Col.rating, alignment: .leading)
             label("KEY", .key).frame(width: Col.key, alignment: .trailing)
             label("BPM", .bpm).frame(width: Col.bpm, alignment: .trailing)
             label("TIME", .duration).frame(width: Col.time, alignment: .trailing)
@@ -488,6 +499,7 @@ private struct TrackRow: View {
                     Image(systemName: "doc").font(.system(size: 9)).foregroundColor(Theme.textDim)
                 }
                 Text(track.title).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                    .help(track.playCount == 0 ? "Not played yet" : "Played \(track.playCount) times")
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(track.artist.isEmpty ? "—" : track.artist)
@@ -502,8 +514,11 @@ private struct TrackRow: View {
                 Text(activity)
                     .font(.system(size: 10))
                     .foregroundColor(Theme.amber)
-                    .frame(width: Col.key + Col.bpm + Col.time + 16, alignment: .trailing)
+                    .frame(width: Col.rating + Col.key + Col.bpm + Col.time + 24, alignment: .trailing)
             } else {
+                Text(track.rating == 0 ? "" : String(repeating: "★", count: track.rating))
+                    .font(.system(size: 10)).foregroundColor(Theme.amber)
+                    .frame(width: Col.rating, alignment: .leading)
                 Text(track.musicalKey?.camelot ?? "")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(keyColor)
@@ -570,6 +585,20 @@ private struct FilterBar: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
             .help("Show only tracks whose key mixes with a deck (Camelot wheel neighbours)")
+            Menu {
+                Button("Any rating") { library.filter.minRating = nil }
+                ForEach(1...5, id: \.self) { n in
+                    Button(String(repeating: "★", count: n) + " and up") { library.filter.minRating = n }
+                }
+            } label: {
+                Text(library.filter.minRating.map { String(repeating: "★", count: $0) + "+" } ?? "Any rating")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            PanelLabel("PLAYS ≥")
+            TextField("", value: $library.filter.minPlays, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 40)
             Spacer(minLength: 0)
             if !library.filter.isEmpty {
                 Button("Save as Smart Album…", action: saveAsSmartAlbum).controlSize(.small)
@@ -595,6 +624,8 @@ private struct FilterBar: View {
         default: break
         }
         if let k = f.compatibleKey { parts.append("mixes with \(k)") }
+        if let r = f.minRating { parts.append(String(repeating: "★", count: r) + " and up") }
+        if let p = f.minPlays { parts.append("played \(p)+ times") }
         if f.downloadedOnly { parts.append("saved only") }
         return parts.joined(separator: " · ")
     }

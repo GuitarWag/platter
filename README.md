@@ -41,7 +41,8 @@ CPU with both decks playing (starts a second, silent copy of the app for about 2
 window comes to the front, because a hidden window is not drawn):
 
 ```sh
-scripts/bench.sh
+scripts/bench.sh            # DJ rig, both decks
+scripts/bench.sh player 0   # music player; 0 spectrum, 1 scope, 2 no visualizer
 ```
 
 ## How it works
@@ -113,6 +114,31 @@ resize).
   starts each mix on a 16-beat phrase, brings the next track in on its cue point or first
   beat, syncs it in key lock, swaps the basses halfway, and lets the tempo glide back to the
   track's own. Without Beatmix it crossfades over the last `FADE` seconds.
+
+## Music player
+
+`⌘2` opens the player window (`⌘1` the DJ rig). It uses the same engine and library, so
+YouTube playlists, downloads, analysis, and local files work in both. By default the
+player and the DJ decks pause each other.
+
+- **Main panel:** time (click for remaining), scrolling title, format, seek bar, transport,
+  volume and balance, shuffle, repeat (off, all, one), and the crossfade menu: gapless, or a
+  2 to 12 s crossfade; volume leveling between tracks.
+- **Visualizer:** spectrum bars with peak hold or an oscilloscope; click to switch or turn off.
+- **EQ panel:** 10 bands (60 Hz to 16 kHz), preamp, presets, and the response curve.
+- **Library panel (LIB):** albums with cover art and artists; double-click to play,
+  right-click to play next or add to the queue.
+- **Playlist panel (PL):** the saved queue. Search, drag to reorder, Delete to remove, drop
+  audio files or a YouTube playlist link to add, or Add → YouTube playlist URL.
+- **Shade:** folds the window into one bar.
+- **macOS:** Now Playing in Control Center, media keys and AirPods, a menu bar mini player,
+  and a Dock menu. Closing the windows keeps the music playing.
+- **Keys** (player window): `Z` previous, `X` play, `C` pause, `V` stop, `B` next, space,
+  `←` `→` seek 5 s, `↑` `↓` volume.
+
+From the DJ library, right-click a track → Music Player to play it, play it next, or queue
+it. Tracks have ratings (right-click → Rating) and play counts; smart albums can filter on
+both.
 
 ## Keyboard
 

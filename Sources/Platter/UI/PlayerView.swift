@@ -21,6 +21,7 @@ struct PlayerWindowView: View {
     @AppStorage("player.showEQ") private var showEQ = true
     @AppStorage("player.showPlaylist") private var showPlaylist = true
     @AppStorage("player.shade") private var shade = false
+    @AppStorage("player.showLibrary") private var showLibrary = false
 
     init(model: AppModel) {
         self.model = model
@@ -32,14 +33,16 @@ struct PlayerWindowView: View {
             if shade {
                 ShadeBar(player: player, shade: $shade)
             } else {
-                MainPanel(player: player, engine: model.engine, showEQ: $showEQ, showPlaylist: $showPlaylist, shade: $shade)
+                MainPanel(player: player, engine: model.engine, showEQ: $showEQ, showPlaylist: $showPlaylist,
+                          showLibrary: $showLibrary, shade: $shade)
                 if showEQ { EQPanel(player: player) }
+                if showLibrary { LibraryPanel(model: model) }
                 if showPlaylist { PlaylistPanel(model: model, player: player) }
             }
         }
         .frame(width: 560)
-        .frame(minHeight: shade ? 34 : nil, maxHeight: showPlaylist && !shade ? .infinity : nil)
-        .fixedSize(horizontal: false, vertical: !showPlaylist || shade)
+        .frame(minHeight: shade ? 34 : nil, maxHeight: (showPlaylist || showLibrary) && !shade ? .infinity : nil)
+        .fixedSize(horizontal: false, vertical: !(showPlaylist || showLibrary) || shade)
         .background(Color(white: 0.1))
         .background(WindowAccessor { model.playerWindow = $0 })
         .preferredColorScheme(.dark)
@@ -68,6 +71,7 @@ private struct MainPanel: View {
     let engine: AudioEngine
     @Binding var showEQ: Bool
     @Binding var showPlaylist: Bool
+    @Binding var showLibrary: Bool
     @Binding var shade: Bool
 
     var body: some View {
@@ -120,6 +124,7 @@ private struct MainPanel: View {
                 .fixedSize()
                 .help("Crossfade, volume leveling, and DJ deck options")
                 Toggle("EQ", isOn: $showEQ).toggleStyle(.button).controlSize(.small).help("Show the equalizer")
+                Toggle("LIB", isOn: $showLibrary).toggleStyle(.button).controlSize(.small).help("Browse albums and artists")
                 Toggle("PL", isOn: $showPlaylist).toggleStyle(.button).controlSize(.small).help("Show the playlist")
                 Button { shade = true } label: { Image(systemName: "rectangle.compress.vertical") }
                     .controlSize(.small).help("Shade: fold into one bar")
@@ -212,6 +217,7 @@ struct Visualizer: View {
                         ctx.fill(Path(CGRect(x: x + 1, y: size.height - h, width: w - 2, height: h)),
                                  with: .linearGradient(Gradient(colors: [LCD.green, Color.yellow, Color.orange]),
                                                        startPoint: CGPoint(x: 0, y: size.height), endPoint: CGPoint(x: 0, y: 0)))
+                        guard held[i] > 0.01 else { continue }
                         let py = size.height - CGFloat(held[i]) * size.height
                         ctx.fill(Path(CGRect(x: x + 1, y: py - 1, width: w - 2, height: 1.5)), with: .color(.white.opacity(0.8)))
                     }
@@ -527,6 +533,8 @@ private struct PlaylistPanel: View {
     @ObservedObject private var library: Library
     @State private var search = ""
     @State private var selection: Set<QueueEntry.ID> = []
+    @State private var askingURL = false
+    @State private var urlDraft = ""
 
     init(model: AppModel, player: PlayerState) {
         self.model = model
@@ -555,6 +563,7 @@ private struct PlaylistPanel: View {
                         .contextMenu {
                             Button("Play") { player.play(index: i) }
                             Button("Remove") { player.remove(at: IndexSet(integer: i)) }
+                            RatingMenu(rating: entry.track.rating) { library.setRating(entry.track, $0) }
                         }
                 }
                 .onMove(perform: moveRows)
@@ -564,9 +573,12 @@ private struct PlaylistPanel: View {
             .background(LCD.screen)
             .onDeleteCommand { removeSelected() }
             .dropDestination(for: URL.self) { urls, _ in
-                let files = urls.filter(\.isFileURL)
-                guard !files.isEmpty else { return false }
-                Task { player.enqueue(await library.importFiles(files, select: false)) }
+                let files = urls.filter(\.isFileURL), web = urls.filter { !$0.isFileURL }
+                guard !files.isEmpty || !web.isEmpty else { return false }
+                Task {
+                    if !files.isEmpty { player.enqueue(await library.importFiles(files, select: false)) }
+                    for u in web { player.enqueue(await library.resolvePlaylistTracks(url: u.absoluteString)) }
+                }
                 return true
             }
             .overlay {
@@ -583,6 +595,7 @@ private struct PlaylistPanel: View {
                     }
                     Divider()
                     Button("Files…") { addFiles() }
+                    Button("YouTube playlist URL…") { urlDraft = ""; askingURL = true }
                 } label: { Label("Add", systemImage: "plus") }
                 .menuStyle(.borderlessButton).fixedSize()
                 Button("Remove") { removeSelected() }.disabled(selection.isEmpty)
@@ -594,6 +607,16 @@ private struct PlaylistPanel: View {
             .background(Color(white: 0.13))
         }
         .frame(minHeight: 180)
+        .alert("Add a YouTube playlist", isPresented: $askingURL) {
+            TextField("https://music.youtube.com/playlist?list=…", text: $urlDraft)
+            Button("Add") {
+                let u = urlDraft
+                Task { player.enqueue(await library.resolvePlaylistTracks(url: u)) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Its tracks go straight into the queue, without making an album.")
+        }
     }
 
     private var rows: [(index: Int, entry: QueueEntry)] {
@@ -613,10 +636,7 @@ private struct PlaylistPanel: View {
     }
 
     private func addAlbum(_ id: Int64) {
-        let previous = library.source
-        library.source = .album(id)
-        player.enqueue(library.tracks)
-        library.source = previous
+        player.enqueue(library.tracks(inAlbum: id))
     }
 
     private func addFiles() {
@@ -668,7 +688,9 @@ struct MiniPlayerView: View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
                 Group {
-                    if let art { Image(nsImage: art).resizable().scaledToFill() } else { LCD.screen }
+                    if let art {
+                        Image(nsImage: art).resizable().scaledToFill().scaleEffect(player.current?.isLocal == false ? 1.34 : 1)
+                    } else { LCD.screen }
                 }
                 .frame(width: 48, height: 48)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -698,6 +720,128 @@ struct MiniPlayerView: View {
         .task(id: player.current?.id) {
             art = nil
             if let t = player.current { art = await Artwork.image(for: t, audioDirectory: model.library.audioDirectory) }
+        }
+    }
+}
+
+// MARK: Library browser
+
+/// Albums (with cover art) and artists, to play or queue.
+private struct LibraryPanel: View {
+    let model: AppModel
+    @ObservedObject private var library: Library
+    @AppStorage("player.libraryTab") private var tab = 0
+    @State private var tracks: [Track] = []
+
+    init(model: AppModel) {
+        self.model = model
+        library = model.library
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $tab) {
+                Text("Albums").tag(0)
+                Text("Artists").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 200)
+            .padding(6)
+            ScrollView {
+                if tab == 0 {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                        ForEach(library.albums) { album in
+                            AlbumTile(model: model, album: album, tracks: library.tracks(inAlbum: album.id))
+                        }
+                    }
+                    .padding(10)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(artists, id: \.name) { a in
+                            HStack {
+                                Text(a.name.isEmpty ? "Unknown artist" : a.name).font(.system(size: 12))
+                                Spacer()
+                                Text("\(a.tracks.count)").font(LCD.mono(10)).foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                            .onTapGesture(count: 2) { model.player.playAll(a.tracks) }
+                            .contextMenu { QueueMenu(player: model.player, tracks: a.tracks) }
+                            Divider().opacity(0.3)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(minHeight: 200)
+        .background(Color(white: 0.12))
+        .task(id: library.albums) { tracks = library.allTracks() }
+    }
+
+    private var artists: [(name: String, tracks: [Track])] {
+        Dictionary(grouping: tracks, by: \.artist)
+            .map { ($0.key, $0.value) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+}
+
+private struct AlbumTile: View {
+    let model: AppModel
+    let album: Album
+    let tracks: [Track]
+    @State private var art: NSImage?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ZStack {
+                LCD.screen
+                if let art {
+                    // YouTube thumbnails are letterboxed; zoom in to the art.
+                    Image(nsImage: art).resizable().scaledToFill().scaleEffect(tracks.first?.isLocal == false ? 1.34 : 1)
+                } else {
+                    Image(systemName: "opticaldisc").font(.system(size: 28)).foregroundColor(LCD.dim)
+                }
+            }
+            .frame(width: 120, height: 120)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            Text(album.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+            Text("\(album.trackCount) tracks").font(.system(size: 10)).foregroundColor(.secondary)
+        }
+        .frame(width: 120)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { model.player.playAll(tracks) }
+        .contextMenu { QueueMenu(player: model.player, tracks: tracks) }
+        .help("Double-click to play")
+        .task(id: tracks.first?.id) {
+            if let t = tracks.first { art = await Artwork.image(for: t, audioDirectory: model.library.audioDirectory) }
+        }
+    }
+}
+
+/// Play, play next, add to the queue.
+struct QueueMenu: View {
+    let player: PlayerState
+    let tracks: [Track]
+
+    var body: some View {
+        Button("Play") { player.playAll(tracks) }
+        Button("Play Next") { player.enqueue(tracks, next: true) }
+        Button("Add to Queue") { player.enqueue(tracks) }
+    }
+}
+
+/// Set a rating: none to five stars.
+struct RatingMenu: View {
+    let rating: Int
+    let set: (Int) -> Void
+
+    var body: some View {
+        Menu("Rating") {
+            ForEach(0...5, id: \.self) { n in
+                Button(n == 0 ? "None" : String(repeating: "★", count: n)) { set(n) }
+                    .disabled(n == rating)
+            }
         }
     }
 }

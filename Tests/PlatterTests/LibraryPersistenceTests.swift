@@ -191,6 +191,38 @@ final class LibraryDBTests: XCTestCase {
         XCTAssertEqual(try db.smartAlbums(), [])
     }
 
+    func testRatingsPlaysAndQueue() throws {
+        let (a, _) = try seed()
+        try db.setRating("t1", 4)
+        try db.setRating("t2", 9) // clamped
+        try db.addHistory("t1", deck: "Player", source: "player")
+        try db.addHistory("t1", deck: "A")
+        XCTAssertEqual(try db.track("t1")?.rating, 4)
+        XCTAssertEqual(try db.track("t2")?.rating, 5)
+        XCTAssertEqual(try db.track("t1")?.playCount, 2)
+        XCTAssertTrue(try db.history().last!.albumNames.hasPrefix("Player"))
+
+        let all = try db.allTracks()
+        XCTAssertEqual(all.filter(TrackFilter(minRating: 5).matches).map(\.id), ["t2"])
+        XCTAssertEqual(all.filter(TrackFilter(minPlays: 1).matches).map(\.id), ["t1"])
+        let id = try db.createSmartAlbum(name: "Loved", filter: TrackFilter(minRating: 4, minPlays: 1))
+        XCTAssertEqual(try db.smartAlbums().first { $0.id == id }?.filter, TrackFilter(minRating: 4, minPlays: 1))
+
+        let sorted = all.sorted(by: TrackSort(column: .rating).areInOrder).map(\.id)
+        XCTAssertEqual(sorted.prefix(2), ["t2", "t1"])
+        XCTAssertEqual(sorted.last, "t3", "unrated last")
+
+        try db.upsertTracks([Track(id: "yt1", title: "From a playlist", duration: 200), Track(id: "t1", title: "ignored")])
+        XCTAssertEqual(try db.track("yt1")?.title, "From a playlist")
+        XCTAssertEqual(try db.track("t1")?.title, "Café del Mar", "an upsert keeps edits")
+        XCTAssertFalse(try db.tracks(album: a).contains { $0.id == "yt1" }, "not put in an album")
+
+        try db.savePlayerQueue(["t3", "yt1", "t3"])
+        XCTAssertEqual(try db.playerQueue().map(\.id), ["t3", "yt1", "t3"])
+        try db.savePlayerQueue([])
+        XCTAssertEqual(try db.playerQueue(), [])
+    }
+
     func testImportLegacyJSON() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

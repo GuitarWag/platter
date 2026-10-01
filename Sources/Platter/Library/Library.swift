@@ -353,6 +353,33 @@ final class Library: ObservableObject {
         reload()
     }
 
+    /// Resolve a YouTube or YouTube Music playlist into library tracks without making an
+    /// album (for the player's queue). The tracks get library rows, so their downloads and
+    /// analysis are kept.
+    func resolvePlaylistTracks(url raw: String) async -> [Track] {
+        let url = Self.normalize(raw)
+        isResolving = true
+        defer { isResolving = false }
+        switch await YTDLP.playlist(url: url) {
+        case .playlist(_, let found):
+            var out: [Track] = []
+            attempt {
+                try db.upsertTracks(found)
+                out = try found.compactMap { try db.track($0.id) }
+            }
+            reload()
+            return out
+        case .failure(let reason):
+            error = "Could not resolve the playlist: \(reason)"
+            return []
+        }
+    }
+
+    func allTracks() -> [Track] { (try? db.allTracks()) ?? [] }
+
+    /// Every track of an album, in album order.
+    func tracks(inAlbum id: Int64) -> [Track] { (try? db.tracks(album: id)) ?? [] }
+
     // MARK: Player storage
 
     func playerQueue() -> [Track] { (try? db.playerQueue()) ?? [] }
@@ -547,7 +574,7 @@ enum Source: Hashable {
 /// A sort of the track list by one column.
 struct TrackSort: Equatable {
     enum Column: String, CaseIterable {
-        case title, artist, bpm, key, duration
+        case title, artist, bpm, key, duration, rating
     }
     var column: Column
     var ascending = true
@@ -559,6 +586,8 @@ struct TrackSort: Equatable {
         case .artist: result = a.artist.localizedStandardCompare(b.artist) == .orderedAscending
         case .bpm: result = (a.bpm ?? .infinity) < (b.bpm ?? .infinity)
         case .duration: result = (a.duration ?? .infinity) < (b.duration ?? .infinity)
+        // Most stars first; unrated last.
+        case .rating: result = (a.rating == 0 ? -1 : a.rating) > (b.rating == 0 ? -1 : b.rating)
         // Camelot order: 1A 1B 2A ... 12B, unknown keys last.
         case .key: result = Self.camelotRank(a) < Self.camelotRank(b)
         }

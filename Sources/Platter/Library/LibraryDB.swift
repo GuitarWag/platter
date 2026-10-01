@@ -291,6 +291,18 @@ final class LibraryDB {
         }
     }
 
+    /// Insert tracks (or fill a missing duration) without putting them in an album.
+    func upsertTracks(_ tracks: [Track]) throws {
+        try transaction {
+            for t in tracks {
+                _ = try conn.execute("""
+                    INSERT INTO track (id, title, artist, duration) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET duration = coalesce(track.duration, excluded.duration)
+                    """, [t.id, t.title, t.artist, t.duration])
+            }
+        }
+    }
+
     func removeTrack(_ id: String, from album: Int64) throws {
         _ = try conn.execute("DELETE FROM album_track WHERE album_id = ? AND track_id = ?", [album, id])
     }
