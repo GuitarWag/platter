@@ -85,6 +85,9 @@ final class PlayerState: ObservableObject {
     var onError: ((String) -> Void)?
     /// The player is about to start. The app model pauses the decks.
     var onWillPlay: (() -> Void)?
+    /// Off for benchmarks: no play history and no saved queue or settings.
+    var recordsHistory = true
+    var persists = true
 
     let player: QueuePlayer
     private unowned let engine: AudioEngine
@@ -189,7 +192,7 @@ final class PlayerState: ObservableObject {
             onWillPlay?()
             player.play()
             isPlaying = true
-            library.logPlayerPlay(p.track)
+            if recordsHistory { library.logPlayerPlay(p.track) }
             save()
             planNext()
         }
@@ -244,7 +247,7 @@ final class PlayerState: ObservableObject {
         guard let n = plannedNext, queue.indices.contains(n) else { return }
         currentIndex = n
         plannedNext = nil
-        library.logPlayerPlay(queue[n].track)
+        if recordsHistory { library.logPlayerPlay(queue[n].track) }
         save()
         planNext()
     }
@@ -310,6 +313,7 @@ final class PlayerState: ObservableObject {
     }
 
     private func save() {
+        guard persists else { return }
         var p = prefs
         p.current = currentIndex
         if let data = try? JSONEncoder().encode(p) { library.setSetting("player.prefs", String(decoding: data, as: UTF8.self)) }

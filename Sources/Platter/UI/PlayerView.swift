@@ -32,7 +32,7 @@ struct PlayerWindowView: View {
             if shade {
                 ShadeBar(player: player, shade: $shade)
             } else {
-                MainPanel(player: player, showEQ: $showEQ, showPlaylist: $showPlaylist, shade: $shade)
+                MainPanel(player: player, engine: model.engine, showEQ: $showEQ, showPlaylist: $showPlaylist, shade: $shade)
                 if showEQ { EQPanel(player: player) }
                 if showPlaylist { PlaylistPanel(model: model, player: player) }
             }
@@ -65,6 +65,7 @@ struct WindowAccessor: NSViewRepresentable {
 
 private struct MainPanel: View {
     @ObservedObject var player: PlayerState
+    let engine: AudioEngine
     @Binding var showEQ: Bool
     @Binding var showPlaylist: Bool
     @Binding var shade: Bool
@@ -72,7 +73,7 @@ private struct MainPanel: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                TimeScreen(player: player)
+                TimeScreen(player: player, engine: engine)
                 VStack(alignment: .leading, spacing: 6) {
                     Marquee(text: titleText)
                         .frame(height: 22)
@@ -142,6 +143,7 @@ private struct MainPanel: View {
 /// The big time display and the visualizer.
 private struct TimeScreen: View {
     @ObservedObject var player: PlayerState
+    let engine: AudioEngine
     @AppStorage("player.showRemaining") private var remaining = false
 
     var body: some View {
@@ -150,9 +152,10 @@ private struct TimeScreen: View {
                 Image(systemName: player.isPlaying ? "play.fill" : player.current == nil ? "stop.fill" : "pause.fill")
                     .font(.system(size: 10))
                     .foregroundColor(LCD.green)
-                TimelineView(.animation(minimumInterval: 0.25, paused: !player.isPlaying)) { _ in
+                TimelineView(.animation(minimumInterval: 0.25, paused: !player.isPlaying)) { timeline in
                     // A Canvas, so the ticking digits never trigger a layout pass.
                     Canvas { ctx, size in
+                        _ = timeline.date // redraw on each tick (see ZoomWaveform)
                         let t = remaining ? player.duration - player.position : player.position
                         let s = max(0, Int(t))
                         let text = (remaining ? "-" : " ") + String(format: "%02d:%02d", s / 60, s % 60)
@@ -164,7 +167,7 @@ private struct TimeScreen: View {
                 .onTapGesture { remaining.toggle() }
                 .help("Click for elapsed or remaining time")
             }
-            Visualizer(player: player)
+            Visualizer(player: player, engine: engine)
                 .frame(width: 150, height: 34)
         }
         .padding(6)
@@ -173,11 +176,69 @@ private struct TimeScreen: View {
     }
 }
 
-/// Placeholder until the spectrum analyzer lands (#7).
+/// Spectrum bars with peak hold, or an oscilloscope. Click to change: spectrum, scope, off.
 struct Visualizer: View {
     @ObservedObject var player: PlayerState
+    let engine: AudioEngine
+    @AppStorage("player.visualizer") private var mode = 0 // 0 spectrum, 1 scope, 2 off
+    @State private var peaks = PeakHold()
+
     var body: some View {
-        Rectangle().fill(LCD.dim.opacity(0.15))
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !player.isPlaying || mode == 2)) { ctx in
+            frame(ctx.date).drawingGroup()
+        }
+        .background(Color.black.opacity(0.3))
+        .contentShape(Rectangle())
+        .onTapGesture { mode = (mode + 1) % 3 }
+        .onAppear { engine.playerViz.enabled = mode != 2 }
+        .onChange(of: mode) { _, m in engine.playerViz.enabled = m != 2 }
+        .help("Click: spectrum, oscilloscope, or off")
+        .accessibilityLabel("Visualizer")
+    }
+
+    /// `date` is read in the drawing, so each tick is a new view value and SwiftUI redraws
+    /// (see ZoomWaveform).
+    private func frame(_ date: Date) -> some View {
+            Canvas { ctx, size in
+                _ = date
+                switch mode {
+                case 0:
+                    let bars = Spectrum.bars(engine.playerViz.snapshot(Spectrum.fftSize), sampleRate: engine.playerVizRate)
+                    let held = peaks.update(bars)
+                    let w = size.width / CGFloat(bars.count)
+                    for (i, v) in bars.enumerated() {
+                        let h = CGFloat(player.isPlaying ? v : 0) * size.height
+                        let x = CGFloat(i) * w
+                        ctx.fill(Path(CGRect(x: x + 1, y: size.height - h, width: w - 2, height: h)),
+                                 with: .linearGradient(Gradient(colors: [LCD.green, Color.yellow, Color.orange]),
+                                                       startPoint: CGPoint(x: 0, y: size.height), endPoint: CGPoint(x: 0, y: 0)))
+                        let py = size.height - CGFloat(held[i]) * size.height
+                        ctx.fill(Path(CGRect(x: x + 1, y: py - 1, width: w - 2, height: 1.5)), with: .color(.white.opacity(0.8)))
+                    }
+                case 1:
+                    let s = engine.playerViz.snapshot(Int(engine.playerVizRate * 0.02))
+                    var path = Path()
+                    for (i, v) in s.enumerated() {
+                        let p = CGPoint(x: CGFloat(i) / CGFloat(max(1, s.count - 1)) * size.width,
+                                        y: size.height / 2 - CGFloat(v) * size.height / 2)
+                        i == 0 ? path.move(to: p) : path.addLine(to: p)
+                    }
+                    ctx.stroke(path, with: .color(LCD.green), lineWidth: 1)
+                default:
+                    break
+                }
+            }
+    }
+}
+
+/// Peak markers that hold, then fall at a steady rate.
+final class PeakHold {
+    private var values: [Float] = []
+
+    func update(_ bars: [Float]) -> [Float] {
+        if values.count != bars.count { values = bars }
+        for i in bars.indices { values[i] = max(bars[i], values[i] - 0.012) }
+        return values
     }
 }
 

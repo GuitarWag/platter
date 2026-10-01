@@ -61,6 +61,8 @@ final class AudioEngine {
     private let playerPre = AVAudioMixerNode()
     private let playerEQ = AVAudioUnitEQ(numberOfBands: PlayerEQ.frequencies.count)
     private let playerMix = AVAudioMixerNode()
+    /// The player's audio after its EQ, for the visualizer.
+    let playerViz = VizBuffer()
     /// When the current recording started, and where it goes.
     private(set) var recording: (started: Date, url: URL)?
 
@@ -131,6 +133,7 @@ final class AudioEngine {
         engine.connect(playerPre, to: playerEQ, format: nil)
         engine.connect(playerEQ, to: playerMix, format: nil)
         engine.connect(playerMix, to: engine.mainMixerNode, format: nil)
+        Self.installViz(on: playerEQ, viz: playerViz)
         for (band, freq) in zip(playerEQ.bands, PlayerEQ.frequencies) {
             band.filterType = .parametric
             band.frequency = freq
@@ -175,6 +178,13 @@ final class AudioEngine {
             meter.push(peak)
         }
     }
+
+    nonisolated private static func installViz(on node: AVAudioNode, viz: VizBuffer) {
+        node.installTap(onBus: 0, bufferSize: 1024, format: nil) { buffer, _ in viz.push(buffer) }
+    }
+
+    /// Sample rate of the player's visualizer feed.
+    var playerVizRate: Double { playerEQ.outputFormat(forBus: 0).sampleRate }
 
     nonisolated private static func installRecorder(on node: AVAudioNode, recorder: Recorder) {
         node.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in

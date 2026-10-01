@@ -15,6 +15,8 @@ final class AppModel: ObservableObject {
     let player: PlayerState
     /// The player window, so DJ shortcuts stay out of it.
     weak var playerWindow: NSWindow?
+    /// Ask the DJ window to open the player window (used by the player benchmark).
+    @Published var openPlayerWindow = false
 
     @Published var error: String?
     private var subscriptions: Set<AnyCancellable> = []
@@ -162,8 +164,29 @@ final class AppModel: ObservableObject {
     /// `PLATTER_BENCH=1`: play a downloaded track on both decks with the channels at zero (no
     /// sound) and bring the window to the front, to measure CPU. See scripts/bench.sh.
     private func startBenchIfRequested() {
-        guard ProcessInfo.processInfo.environment["PLATTER_BENCH"] != nil else { return }
+        let env = ProcessInfo.processInfo.environment
+        guard let bench = env["PLATTER_BENCH"] else { return }
         for d in [deckA, deckB] { d.onFirstPlay = nil } // a benchmark is not a play
+        player.recordsHistory = false
+        player.persists = false
+        if bench == "player" {
+            // The player window plays a downloaded track at volume 0. PLATTER_BENCH_VIZ picks
+            // the visualizer: 0 spectrum, 1 scope, 2 off.
+            UserDefaults.standard.set(Int(env["PLATTER_BENCH_VIZ"] ?? "0") ?? 0, forKey: "player.visualizer")
+            openPlayerWindow = true
+            player.prefs.volume = 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                // Only the player window in front: a covered window is not drawn.
+                NSApp.windows.filter { $0 !== self?.playerWindow }.forEach { $0.orderOut(nil) }
+                self?.playerWindow?.orderFrontRegardless()
+            }
+            Task {
+                let tracks = library.tracks.filter(\.isCached)
+                guard !tracks.isEmpty else { self.error = "Bench: no downloaded track in the selected list."; return }
+                player.playAll(Array(tracks.prefix(1)))
+            }
+            return
+        }
         mixer.setLevel(0, deck: .a)
         mixer.setLevel(0, deck: .b)
         // PLATTER_BENCH=hidden leaves the window behind others: no drawing, so the CPU is the audio.
@@ -233,6 +256,7 @@ struct ModeCommands: Commands {
 /// Bottom (resizable): the library.
 struct PlatterRootView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VSplitView {
@@ -252,6 +276,9 @@ struct PlatterRootView: View {
                 .frame(minHeight: 170, idealHeight: 260)
         }
         .background(Theme.background)
+        .onChange(of: model.openPlayerWindow, initial: true) { _, open in
+            if open { openWindow(id: "player"); model.openPlayerWindow = false }
+        }
         .overlay(alignment: .top) {
             if let e = model.error {
                 ErrorBanner(message: e) { model.error = nil }
