@@ -517,7 +517,7 @@ private struct ClassicEQSlider: View {
                     value = abs(v) < 0.6 ? 0 : (v * 2).rounded() / 2
                 }
                 .onEnded { _ in dragging = false })
-            .onTapGesture(count: 2) { value = 0 }
+            .simultaneousGesture(TapGesture(count: 2).onEnded { value = 0 })
         }
         .help(label)
         .accessibilityElement()
