@@ -7,26 +7,31 @@ import Libsql
 /// small (the largest write is an 8 KB peaks blob), so calls run inline.
 ///
 /// Track search uses an FTS5 index (`track_fts`) that triggers keep in sync with `track`.
-final class LibraryDB {
+package final class LibraryDB {
     private let db: Database
     private let conn: Connection
 
     /// `path` is a file path, or ":memory:" for tests.
-    init(path: String) throws {
+    package init(path: String) throws {
         db = try Database(path)
         conn = try db.connect()
         _ = try first("PRAGMA journal_mode=WAL") { $0.text(0) }
+        // Two apps write this file: wait for the other's write instead of failing "locked".
+        _ = try first("PRAGMA busy_timeout=3000") { $0.int(0) }
         _ = try conn.execute("PRAGMA foreign_keys=ON")
         try migrate()
     }
 
     // MARK: Schema
 
+    // ponytail: the version is read outside a write lock; two apps that start at the same
+    // moment on an old schema could both migrate. Use BEGIN IMMEDIATE if that ever matters.
     private func migrate() throws {
         let version = try first("PRAGMA user_version") { $0.int(0) } ?? 0
         if version < 1 { try conn.executeBatch(Self.schemaV1) }
         if version < 2 { try conn.executeBatch(Self.schemaV2) }
         if version < 3 { try conn.executeBatch(Self.schemaV3) }
+        if version < 4 { try conn.executeBatch(Self.schemaV4) }
     }
 
     // `track.pk` is an explicit INTEGER PRIMARY KEY so VACUUM cannot renumber the rowids
@@ -127,6 +132,25 @@ final class LibraryDB {
     COMMIT;
     """
 
+    /// v4: loudness, rating, play count; the source of each play; the player's queue; smart
+    /// album filters on rating and play count.
+    private static let schemaV4 = """
+    BEGIN;
+    ALTER TABLE track ADD COLUMN loudness REAL;
+    ALTER TABLE track ADD COLUMN rating INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE track ADD COLUMN play_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE play_history ADD COLUMN source TEXT NOT NULL DEFAULT 'dj';
+    ALTER TABLE smart_album ADD COLUMN min_rating INTEGER;
+    ALTER TABLE smart_album ADD COLUMN min_plays INTEGER;
+    CREATE TABLE player_queue (
+        position INTEGER PRIMARY KEY,
+        track_id TEXT NOT NULL REFERENCES track(id) ON DELETE CASCADE
+    );
+    UPDATE track SET play_count = (SELECT count(*) FROM play_history h WHERE h.track_id = track.id);
+    PRAGMA user_version = 4;
+    COMMIT;
+    """
+
     private func transaction(_ body: () throws -> Void) throws {
         _ = try conn.execute("BEGIN")
         do {
@@ -140,7 +164,7 @@ final class LibraryDB {
 
     // MARK: Albums
 
-    func albums() throws -> [Album] {
+    package func albums() throws -> [Album] {
         let sql = """
         SELECT a.id, a.name, a.source_url, count(t.pk), count(t.file_name), coalesce(sum(t.duration), 0)
         FROM album a
@@ -156,12 +180,12 @@ final class LibraryDB {
         }
     }
 
-    func albumID(sourceURL: String) throws -> Int64? {
+    package func albumID(sourceURL: String) throws -> Int64? {
         try first("SELECT id FROM album WHERE source_url = ?", [sourceURL]) { $0.int(0) }
     }
 
     @discardableResult
-    func createAlbum(name: String, sourceURL: String?) throws -> Int64 {
+    package func createAlbum(name: String, sourceURL: String?) throws -> Int64 {
         let sql = """
         INSERT INTO album (name, source_url, position, created_at)
         VALUES (?, ?, (SELECT coalesce(max(position), -1) + 1 FROM album), ?)
@@ -173,16 +197,16 @@ final class LibraryDB {
         return id
     }
 
-    func renameAlbum(_ id: Int64, to name: String) throws {
+    package func renameAlbum(_ id: Int64, to name: String) throws {
         _ = try conn.execute("UPDATE album SET name = ? WHERE id = ?", [name, id])
     }
 
-    func deleteAlbum(_ id: Int64) throws {
+    package func deleteAlbum(_ id: Int64) throws {
         _ = try conn.execute("DELETE FROM album WHERE id = ?", [id])
     }
 
     /// Store the album order. `ids` is the complete list, first to last.
-    func reorderAlbums(_ ids: [Int64]) throws {
+    package func reorderAlbums(_ ids: [Int64]) throws {
         try transaction {
             for (i, id) in ids.enumerated() {
                 _ = try conn.execute("UPDATE album SET position = ? WHERE id = ?", [i, id])
@@ -192,7 +216,12 @@ final class LibraryDB {
 
     // MARK: Tracks
 
-    private static let trackColumns = "t.id, t.title, t.artist, t.duration, t.bpm, t.file_name, t.musical_key, t.beat_offset"
+    private static let trackColumns = """
+        t.id, t.title, t.artist, t.duration, t.bpm, t.file_name, t.musical_key, t.beat_offset,
+        t.loudness, t.rating, t.play_count
+        """
+    /// Columns after `trackColumns` start here.
+    private static let extra: Int32 = 11
 
     private static func track(from r: Row) -> Track {
         var t = Track(id: r.text(0) ?? "", title: r.text(1) ?? "", artist: r.text(2) ?? "",
@@ -201,10 +230,13 @@ final class LibraryDB {
         t.fileName = r.text(5)
         t.key = r.text(6)
         t.beatOffset = r.real(7)
+        t.loudness = r.real(8)
+        t.rating = Int(r.int(9) ?? 0)
+        t.playCount = Int(r.int(10) ?? 0)
         return t
     }
 
-    func tracks(album: Int64) throws -> [Track] {
+    package func tracks(album: Int64) throws -> [Track] {
         let sql = """
         SELECT \(Self.trackColumns) FROM album_track at JOIN track t ON t.id = at.track_id
         WHERE at.album_id = ? ORDER BY at.position
@@ -212,13 +244,13 @@ final class LibraryDB {
         return try conn.query(sql, [album]).map(Self.track(from:))
     }
 
-    func track(_ id: String) throws -> Track? {
+    package func track(_ id: String) throws -> Track? {
         try first("SELECT \(Self.trackColumns) FROM track t WHERE t.id = ?", [id], Self.track(from:))
     }
 
     /// Full-text search on title and artist over the whole library, best match first.
     /// Every word is a prefix match, and all words must match. Diacritics are ignored.
-    func search(_ text: String, limit: Int = 200) throws -> [Track] {
+    package func search(_ text: String, limit: Int = 200) throws -> [Track] {
         guard let match = Self.ftsQuery(text) else { return [] }
         let sql = """
         SELECT \(Self.trackColumns),
@@ -231,14 +263,14 @@ final class LibraryDB {
         """
         return try conn.query(sql, [match, limit]).map { r in
             var t = Self.track(from: r)
-            t.albumNames = r.text(8) ?? ""
+            t.albumNames = r.text(Self.extra) ?? ""
             return t
         }
     }
 
     /// `daft pu"nk` -> `"daft"* "pu""nk"*`: each word is quoted (inner quotes doubled) and made
     /// a prefix term, so user input is never read as FTS5 syntax.
-    static func ftsQuery(_ text: String) -> String? {
+    package static func ftsQuery(_ text: String) -> String? {
         let words = text.split(whereSeparator: \.isWhitespace)
         guard !words.isEmpty else { return nil }
         return words.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"*" }
@@ -248,7 +280,7 @@ final class LibraryDB {
     /// Insert new tracks and append them to the album. A track that is already in the library
     /// keeps its (maybe user-edited) title and artist; only a missing duration is filled in.
     /// A track that is already in the album keeps its position.
-    func addTracks(_ tracks: [Track], to album: Int64) throws {
+    package func addTracks(_ tracks: [Track], to album: Int64) throws {
         try transaction {
             for t in tracks {
                 _ = try conn.execute("""
@@ -263,12 +295,24 @@ final class LibraryDB {
         }
     }
 
-    func removeTrack(_ id: String, from album: Int64) throws {
+    /// Insert tracks (or fill a missing duration) without putting them in an album.
+    package func upsertTracks(_ tracks: [Track]) throws {
+        try transaction {
+            for t in tracks {
+                _ = try conn.execute("""
+                    INSERT INTO track (id, title, artist, duration) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET duration = coalesce(track.duration, excluded.duration)
+                    """, [t.id, t.title, t.artist, t.duration])
+            }
+        }
+    }
+
+    package func removeTrack(_ id: String, from album: Int64) throws {
         _ = try conn.execute("DELETE FROM album_track WHERE album_id = ? AND track_id = ?", [album, id])
     }
 
     /// Store the track order of an album. `ids` is the complete list, first to last.
-    func reorderTracks(_ ids: [String], in album: Int64) throws {
+    package func reorderTracks(_ ids: [String], in album: Int64) throws {
         try transaction {
             for (i, id) in ids.enumerated() {
                 _ = try conn.execute("UPDATE album_track SET position = ? WHERE album_id = ? AND track_id = ?",
@@ -277,44 +321,45 @@ final class LibraryDB {
         }
     }
 
-    func updateTrack(_ id: String, title: String, artist: String) throws {
+    package func updateTrack(_ id: String, title: String, artist: String) throws {
         _ = try conn.execute("UPDATE track SET title = ?, artist = ? WHERE id = ?", [title, artist, id])
     }
 
     // MARK: Downloads and analysis
 
-    func setDownload(_ id: String, fileName: String, size: Int64) throws {
+    package func setDownload(_ id: String, fileName: String, size: Int64) throws {
         _ = try conn.execute("UPDATE track SET file_name = ?, file_size = ?, downloaded_at = ? WHERE id = ?",
                              [fileName, size, Date().timeIntervalSince1970, id])
     }
 
-    func clearDownload(_ id: String) throws {
+    package func clearDownload(_ id: String) throws {
         _ = try conn.execute("UPDATE track SET file_name = NULL, file_size = NULL, downloaded_at = NULL WHERE id = ?",
                              [id])
     }
 
-    func setAnalysis(_ id: String, duration: Double, bpm: Double?, peaks: [Float], wave: [Float]? = nil,
-                     beatOffset: Double? = nil, key: String? = nil, version: Int = 0) throws {
+    package func setAnalysis(_ id: String, duration: Double, bpm: Double?, peaks: [Float], wave: [Float]? = nil,
+                     beatOffset: Double? = nil, key: String? = nil, loudness: Double? = nil,
+                     version: Int = 0) throws {
         _ = try conn.execute("""
             UPDATE track SET duration = ?, bpm = ?, peaks = ?, wave = ?, beat_offset = ?, musical_key = ?,
-                analysis_version = ?
+                loudness = ?, analysis_version = ?
             WHERE id = ?
-            """, [duration, bpm, Self.blob(peaks), wave.map(Self.blob), beatOffset, key, version, id])
+            """, [duration, bpm, Self.blob(peaks), wave.map(Self.blob), beatOffset, key, loudness, version, id])
     }
 
     /// True when the track has no stored analysis, or one from before `version`.
-    func needsAnalysis(_ id: String, version: Int) throws -> Bool {
+    package func needsAnalysis(_ id: String, version: Int) throws -> Bool {
         try first("SELECT peaks IS NULL OR wave IS NULL OR analysis_version < ? FROM track WHERE id = ?",
                   [version, id]) { $0.int(0) }.map { $0 != 0 } ?? true
     }
 
     /// Stored overview peaks, or `nil` when the track was never analyzed.
-    func peaks(_ id: String) throws -> [Float]? {
+    package func peaks(_ id: String) throws -> [Float]? {
         try first("SELECT peaks FROM track WHERE id = ?", [id], { $0.blob(0) }).map(Self.floats)
     }
 
     /// Stored detail waveform (`Analysis.waveRate` buckets per second), or `nil`.
-    func wave(_ id: String) throws -> [Float]? {
+    package func wave(_ id: String) throws -> [Float]? {
         try first("SELECT wave FROM track WHERE id = ?", [id], { $0.blob(0) }).map(Self.floats)
     }
 
@@ -331,12 +376,12 @@ final class LibraryDB {
     // MARK: Local files
 
     /// Add a track whose audio file is already in the audio folder (an imported local file).
-    func addLocalTrack(_ track: Track, fileName: String, size: Int64, to album: Int64) throws {
+    package func addLocalTrack(_ track: Track, fileName: String, size: Int64, to album: Int64) throws {
         try addTracks([track], to: album)
         try setDownload(track.id, fileName: fileName, size: size)
     }
 
-    func allTracks() throws -> [Track] {
+    package func allTracks() throws -> [Track] {
         try conn.query("SELECT \(Self.trackColumns) FROM track t ORDER BY t.title COLLATE NOCASE")
             .map(Self.track(from:))
     }
@@ -344,7 +389,7 @@ final class LibraryDB {
     // MARK: Cues
 
     /// The saved main cue point and hot cues 1-8 of a track.
-    func cues(_ trackID: String) throws -> (cue: Double?, hot: [Double?]) {
+    package func cues(_ trackID: String) throws -> (cue: Double?, hot: [Double?]) {
         var cue: Double?
         var hot = [Double?](repeating: nil, count: 8)
         for r in try conn.query("SELECT slot, seconds FROM cue WHERE track_id = ?", [trackID]) {
@@ -355,7 +400,7 @@ final class LibraryDB {
     }
 
     /// Store (or clear, with `nil`) one cue. Slot -1 is the main cue point.
-    func setCue(_ trackID: String, slot: Int, seconds: Double?) throws {
+    package func setCue(_ trackID: String, slot: Int, seconds: Double?) throws {
         if let seconds {
             _ = try conn.execute("""
                 INSERT INTO cue (track_id, slot, seconds) VALUES (?, ?, ?)
@@ -368,15 +413,20 @@ final class LibraryDB {
 
     // MARK: History
 
-    func addHistory(_ trackID: String, deck: String, at date: Date = Date()) throws {
-        _ = try conn.execute("INSERT INTO play_history (track_id, deck, played_at) VALUES (?, ?, ?)",
-                             [trackID, deck, date.timeIntervalSince1970])
+    /// Log a play. `deck` is "A", "B", or "Player"; `source` is "dj" or "player". Also counts
+    /// the play on the track.
+    package func addHistory(_ trackID: String, deck: String, source: String = "dj", at date: Date = Date()) throws {
+        try transaction {
+            _ = try conn.execute("INSERT INTO play_history (track_id, deck, source, played_at) VALUES (?, ?, ?, ?)",
+                                 [trackID, deck, source, date.timeIntervalSince1970])
+            _ = try conn.execute("UPDATE track SET play_count = play_count + 1 WHERE id = ?", [trackID])
+        }
     }
 
     /// Played tracks, newest first. `albumNames` carries "deck · time" for the list.
-    func history(limit: Int = 500) throws -> [Track] {
+    package func history(limit: Int = 500) throws -> [Track] {
         let sql = """
-        SELECT \(Self.trackColumns), h.deck, h.played_at
+        SELECT \(Self.trackColumns), h.deck, h.played_at, h.source
         FROM play_history h JOIN track t ON t.id = h.track_id
         ORDER BY h.played_at DESC LIMIT ?
         """
@@ -384,59 +434,92 @@ final class LibraryDB {
         f.dateFormat = "EEE HH:mm"
         return try conn.query(sql, [limit]).map { r in
             var t = Self.track(from: r)
-            t.albumNames = "Deck \(r.text(8) ?? "?") · \(f.string(from: Date(timeIntervalSince1970: r.real(9) ?? 0)))"
-            t.playedAt = r.real(9).map(Date.init(timeIntervalSince1970:))
+            let deck = r.text(Self.extra) ?? "?"
+            let when = Date(timeIntervalSince1970: r.real(Self.extra + 1) ?? 0)
+            let source = r.text(Self.extra + 2) == "player" ? "Player" : "Deck \(deck)"
+            t.albumNames = "\(source) · \(f.string(from: when))"
+            t.playedAt = when
             return t
         }
     }
 
-    func clearHistory() throws {
+    package func clearHistory() throws {
         _ = try conn.execute("DELETE FROM play_history")
+    }
+
+    // MARK: Ratings
+
+    /// 0 (none) ... 5 stars.
+    package func setRating(_ trackID: String, _ rating: Int) throws {
+        _ = try conn.execute("UPDATE track SET rating = ? WHERE id = ?", [min(5, max(0, rating)), trackID])
+    }
+
+    // MARK: Player queue
+
+    package func playerQueue() throws -> [Track] {
+        try conn.query("SELECT \(Self.trackColumns) FROM player_queue q JOIN track t ON t.id = q.track_id ORDER BY q.position")
+            .map(Self.track(from:))
+    }
+
+    package func savePlayerQueue(_ trackIDs: [String]) throws {
+        try transaction {
+            _ = try conn.execute("DELETE FROM player_queue")
+            for (i, id) in trackIDs.enumerated() {
+                _ = try conn.execute("INSERT INTO player_queue (position, track_id) VALUES (?, ?)", [i, id])
+            }
+        }
     }
 
     // MARK: Smart albums
 
-    func smartAlbums() throws -> [SmartAlbum] {
-        try conn.query("SELECT id, name, min_bpm, max_bpm, key_name, downloaded_only FROM smart_album ORDER BY position, id")
+    package func smartAlbums() throws -> [SmartAlbum] {
+        try conn.query("""
+            SELECT id, name, min_bpm, max_bpm, key_name, downloaded_only, min_rating, min_plays
+            FROM smart_album ORDER BY position, id
+            """)
             .map { r in
                 SmartAlbum(id: r.int(0) ?? 0, name: r.text(1) ?? "",
                            filter: TrackFilter(minBPM: r.real(2), maxBPM: r.real(3),
-                                               compatibleKey: r.text(4), downloadedOnly: (r.int(5) ?? 0) != 0))
+                                               compatibleKey: r.text(4), downloadedOnly: (r.int(5) ?? 0) != 0,
+                                               minRating: r.int(6).map(Int.init), minPlays: r.int(7).map(Int.init)))
             }
     }
 
     @discardableResult
-    func createSmartAlbum(name: String, filter: TrackFilter) throws -> Int64 {
+    package func createSmartAlbum(name: String, filter: TrackFilter) throws -> Int64 {
         let sql = """
-        INSERT INTO smart_album (name, min_bpm, max_bpm, key_name, downloaded_only, position)
-        VALUES (?, ?, ?, ?, ?, (SELECT coalesce(max(position), -1) + 1 FROM smart_album))
+        INSERT INTO smart_album (name, min_bpm, max_bpm, key_name, downloaded_only, min_rating, min_plays, position)
+        VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT coalesce(max(position), -1) + 1 FROM smart_album))
         RETURNING id
         """
         guard let id = try first(sql, [name, filter.minBPM, filter.maxBPM, filter.compatibleKey,
-                                       filter.downloadedOnly ? 1 : 0], { $0.int(0) }) else {
+                                       filter.downloadedOnly ? 1 : 0, filter.minRating, filter.minPlays],
+                                 { $0.int(0) }) else {
             throw LibraryError("Could not create the smart album.")
         }
         return id
     }
 
-    func updateSmartAlbum(_ album: SmartAlbum) throws {
+    package func updateSmartAlbum(_ album: SmartAlbum) throws {
         _ = try conn.execute("""
-            UPDATE smart_album SET name = ?, min_bpm = ?, max_bpm = ?, key_name = ?, downloaded_only = ? WHERE id = ?
+            UPDATE smart_album SET name = ?, min_bpm = ?, max_bpm = ?, key_name = ?, downloaded_only = ?,
+                min_rating = ?, min_plays = ?
+            WHERE id = ?
             """, [album.name, album.filter.minBPM, album.filter.maxBPM, album.filter.compatibleKey,
-                  album.filter.downloadedOnly ? 1 : 0, album.id])
+                  album.filter.downloadedOnly ? 1 : 0, album.filter.minRating, album.filter.minPlays, album.id])
     }
 
-    func deleteSmartAlbum(_ id: Int64) throws {
+    package func deleteSmartAlbum(_ id: Int64) throws {
         _ = try conn.execute("DELETE FROM smart_album WHERE id = ?", [id])
     }
 
     // MARK: Settings
 
-    func setting(_ key: String) throws -> String? {
+    package func setting(_ key: String) throws -> String? {
         try first("SELECT value FROM setting WHERE key = ?", [key]) { $0.text(0) }
     }
 
-    func setSetting(_ key: String, _ value: String?) throws {
+    package func setSetting(_ key: String, _ value: String?) throws {
         if let value {
             _ = try conn.execute("INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                                  [key, value])
@@ -448,29 +531,29 @@ final class LibraryDB {
     // MARK: Import from library.json (v1 of the app)
 
     private struct LegacyState: Decodable {
-        var albums: [LegacyAlbum] = []
-        var selectedURL: String?
+        package var albums: [LegacyAlbum] = []
+        package var selectedURL: String?
     }
 
     private struct LegacyAlbum: Decodable {
-        var name: String
-        var url: String
-        var tracks: [LegacyTrack] = []
+        package var name: String
+        package var url: String
+        package var tracks: [LegacyTrack] = []
     }
 
     private struct LegacyTrack: Decodable {
-        var id: String
-        var title: String
-        var artist: String?
-        var duration: Double?
-        var bpm: Double?
-        var peaks: [Float]?
+        package var id: String
+        package var title: String
+        package var artist: String?
+        package var duration: Double?
+        package var bpm: Double?
+        package var peaks: [Float]?
     }
 
     /// Copy the albums of an old `library.json` into the database. Tracks whose audio file is
     /// in `audioDirectory` are marked as downloaded. Returns the number of albums imported.
     @discardableResult
-    func importLegacyJSON(_ data: Data, audioDirectory: URL) throws -> Int {
+    package func importLegacyJSON(_ data: Data, audioDirectory: URL) throws -> Int {
         let state = try JSONDecoder().decode(LegacyState.self, from: data)
         for album in state.albums where try albumID(sourceURL: album.url) == nil {
             let id = try createAlbum(name: album.name, sourceURL: album.url)
@@ -494,9 +577,9 @@ final class LibraryDB {
 }
 
 /// Error carrying a user-facing message.
-struct LibraryError: Error {
-    let message: String
-    init(_ message: String) { self.message = message }
+package struct LibraryError: Error {
+    package let message: String
+    package init(_ message: String) { self.message = message }
 }
 
 // MARK: libSQL helpers

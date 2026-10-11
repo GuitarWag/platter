@@ -1,4 +1,5 @@
 import SwiftUI
+import PlatterCore
 
 /// Layout of the turntable, in points, from the plinth height. Modeled on a Technics
 /// SL-1200: platter on the left, tonearm pivot top right, pitch fader bottom right,
@@ -637,31 +638,3 @@ struct PitchSlider: View {
     }
 }
 
-/// A button that sinks a little while pressed.
-struct PressableStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.95 : 1)
-            .brightness(configuration.isPressed ? -0.08 : 0)
-    }
-}
-
-/// Deterministic random numbers from a string (SplitMix64 over an FNV-1a hash), so a record
-/// looks the same every launch.
-struct SeededRandom: RandomNumberGenerator {
-    private var state: UInt64
-
-    init(_ seed: String) {
-        var h: UInt64 = 0xcbf2_9ce4_8422_2325
-        for b in seed.utf8 { h = (h ^ UInt64(b)) &* 0x100_0000_01b3 }
-        state = h
-    }
-
-    mutating func next() -> UInt64 {
-        state &+= 0x9e37_79b9_7f4a_7c15
-        var z = state
-        z = (z ^ (z >> 30)) &* 0xbf58_476d_1ce4_e5b9
-        z = (z ^ (z >> 27)) &* 0x94d0_49bb_1331_11eb
-        return z ^ (z >> 31)
-    }
-}

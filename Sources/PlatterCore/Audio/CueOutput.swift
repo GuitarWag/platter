@@ -5,14 +5,14 @@ import os
 
 /// One deck's headphone feed: a stereo ring buffer. The mixer's tap thread writes post-EQ,
 /// pre-fader audio when PFL is on; the headphone engine's render thread reads it.
-final class CueFeed: @unchecked Sendable {
+package final class CueFeed: @unchecked Sendable {
     private struct Ring {
-        var left: [Float]
-        var right: [Float]
-        var write = 0
-        var read = 0
-        var count = 0
-        var enabled = false
+        package var left: [Float]
+        package var right: [Float]
+        package var write = 0
+        package var read = 0
+        package var count = 0
+        package var enabled = false
     }
 
     /// 1 s at 48 kHz. The feed is kept near `target` frames, so drift between two devices'
@@ -22,16 +22,16 @@ final class CueFeed: @unchecked Sendable {
     private let ring = OSAllocatedUnfairLock(uncheckedState: Ring(left: [Float](repeating: 0, count: capacity),
                                                                     right: [Float](repeating: 0, count: capacity)))
 
-    var enabled: Bool {
+    package var enabled: Bool {
         get { ring.withLockUnchecked { $0.enabled } }
         set { ring.withLockUnchecked { $0.enabled = newValue; $0.count = 0; $0.read = $0.write } }
     }
 
     /// Frames waiting to be played.
-    var buffered: Int { ring.withLockUnchecked { $0.count } }
+    package var buffered: Int { ring.withLockUnchecked { $0.count } }
 
     /// Tap thread. Mono buffers go to both sides.
-    func write(_ buffer: AVAudioPCMBuffer) {
+    package func write(_ buffer: AVAudioPCMBuffer) {
         guard let data = buffer.floatChannelData else { return }
         let n = Int(buffer.frameLength), ch = Int(buffer.format.channelCount)
         ring.withLockUnchecked { r in
@@ -52,7 +52,7 @@ final class CueFeed: @unchecked Sendable {
     }
 
     /// Render thread. Adds up to `n` frames into `l` and `r`; silence where the feed is empty.
-    func mix(into l: UnsafeMutablePointer<Float>, _ rr: UnsafeMutablePointer<Float>, frames n: Int) {
+    package func mix(into l: UnsafeMutablePointer<Float>, _ rr: UnsafeMutablePointer<Float>, frames n: Int) {
         ring.withLockUnchecked { r in
             guard r.enabled else { return }
             let take = min(n, r.count)
@@ -69,23 +69,23 @@ final class CueFeed: @unchecked Sendable {
 /// The headphone output (PFL): a second engine on a chosen output device that plays the cue
 /// feeds of the decks with PFL on.
 @MainActor
-final class CueOutput {
-    let feeds: [DeckID: CueFeed] = [.a: CueFeed(), .b: CueFeed()]
+package final class CueOutput {
+    package let feeds: [DeckID: CueFeed] = [.a: CueFeed(), .b: CueFeed()]
     private var engine: AVAudioEngine?
-    private(set) var deviceID: AudioDeviceID?
+    package private(set) var deviceID: AudioDeviceID?
     /// Headphone level, 0 ... 1.
-    var volume: Float = 0.8 {
+    package var volume: Float = 0.8 {
         didSet { engine?.mainMixerNode.outputVolume = volume }
     }
 
-    struct Device: Identifiable, Hashable {
-        let id: AudioDeviceID
-        let name: String
+    package struct Device: Identifiable, Hashable {
+        package let id: AudioDeviceID
+        package let name: String
     }
 
     /// Start (or move) the headphone engine on `device`. `sampleRate` is the main graph's
     /// rate, which is the rate of the cue feeds; the engine converts to the device.
-    func start(device: AudioDeviceID, sampleRate: Double) throws {
+    package func start(device: AudioDeviceID, sampleRate: Double) throws {
         stop()
         let e = AVAudioEngine()
         guard let unit = e.outputNode.audioUnit else { throw LibraryError("No headphone output unit.") }
@@ -106,13 +106,13 @@ final class CueOutput {
         deviceID = device
     }
 
-    func stop() {
+    package func stop() {
         engine?.stop()
         engine = nil
         deviceID = nil
     }
 
-    var isRunning: Bool { engine?.isRunning == true }
+    package var isRunning: Bool { engine?.isRunning == true }
 
     /// The render block runs on the headphone device's audio thread; it touches only feeds.
     nonisolated private static func makeSource(feeds: [CueFeed], format: AVAudioFormat) -> AVAudioSourceNode {
@@ -130,7 +130,7 @@ final class CueOutput {
     }
 
     /// Output devices, from CoreAudio.
-    static func outputDevices() -> [Device] {
+    package static func outputDevices() -> [Device] {
         var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
                                               mScope: kAudioObjectPropertyScopeGlobal,
                                               mElement: kAudioObjectPropertyElementMain)
@@ -160,13 +160,13 @@ final class CueOutput {
 
 /// Writes the master output to a file while recording. The tap thread writes, the main
 /// thread opens and closes.
-final class Recorder: @unchecked Sendable {
+package final class Recorder: @unchecked Sendable {
     private let file = OSAllocatedUnfairLock<AVAudioFile?>(uncheckedState: nil)
 
-    func open(_ f: AVAudioFile) { file.withLockUnchecked { $0 = f } }
-    func close() { file.withLockUnchecked { $0 = nil } }
+    package func open(_ f: AVAudioFile) { file.withLockUnchecked { $0 = f } }
+    package func close() { file.withLockUnchecked { $0 = nil } }
 
-    func write(_ buffer: AVAudioPCMBuffer) {
+    package func write(_ buffer: AVAudioPCMBuffer) {
         file.withLockUnchecked { try? $0?.write(from: buffer) }
     }
 }

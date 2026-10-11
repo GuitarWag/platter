@@ -1,4 +1,5 @@
 import SwiftUI
+import PlatterCore
 
 /// Colors and small shared pieces of the hardware look.
 enum Theme {
@@ -47,16 +48,3 @@ struct PanelLabel: View {
     }
 }
 
-/// "m:ss", or "h:mm:ss" from one hour.
-func formatTime(_ seconds: Double) -> String {
-    let s = max(0, Int(seconds))
-    return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
-                     : String(format: "%d:%02d", s / 60, s % 60)
-}
-
-/// "m:ss.t" for the deck display.
-func formatTimeTenths(_ seconds: Double) -> String {
-    let t = max(0, seconds)
-    let s = Int(t)
-    return String(format: "%d:%02d.%d", s / 60, s % 60, Int((t - Double(s)) * 10))
-}

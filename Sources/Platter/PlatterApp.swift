@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AVFoundation
+import PlatterCore
 
 /// Owns the audio engine, the library, and the model group. Created once at launch and
 /// shared with the whole window.
@@ -14,26 +15,21 @@ final class AppModel: ObservableObject {
     let autoDJ: AutoDJ
 
     @Published var error: String?
+    let events = StoreEvents()
     private var subscriptions: Set<AnyCancellable> = []
     private var keyMonitor: Any?
 
     init() {
-        let engine = AudioEngine()
+        let engine = AudioEngine(player: false) // the music player is its own app
         var startError: String? = nil
         do {
             try engine.start()
         } catch {
             startError = "Audio engine failed to start: \(error.localizedDescription)"
         }
-        let db: LibraryDB
-        do {
-            db = try LibraryDB(path: AppPaths.database.path)
-        } catch {
-            // Keep the app usable; nothing is saved this session.
-            startError = "Could not open \(AppPaths.database.path): \(error). The library is not saved this session."
-            db = try! LibraryDB(path: ":memory:")
-        }
-        let library = Library(db: db)
+        let store = LibraryStore.open()
+        if let e = store.error { startError = e }
+        let library = store.library
         let deckA = DeckState(deck: .a, engine: engine)
         let deckB = DeckState(deck: .b, engine: engine)
         let mixer = MixerState(engine: engine)
@@ -45,7 +41,20 @@ final class AppModel: ObservableObject {
         self.autoDJ = AutoDJ(deckA: deckA, deckB: deckB, mixer: mixer, library: library)
         self.error = startError
 
+        // Live sync with Platter Player: one store, two apps.
+        library.onStoreChanged = { [events] in events.post(.libraryChanged) }
+        events.observe(.libraryChanged) { [weak library] in library?.reloadFromStore() }
+        events.observe(.willPlay) { [weak self] in
+            guard let self, self.exclusive else { return }
+            self.autoDJ.stop()
+            self.deckA.pause()
+            self.deckB.pause()
+        }
         for deck in [deckA, deckB] {
+            deck.onPlay = { [weak self] in
+                guard let self, self.exclusive else { return }
+                self.events.post(.willPlay)
+            }
             deck.onError = { [weak self] in self?.error = $0 }
             deck.onCueChanged = { [weak library] in library?.saveCue(trackID: $0, slot: $1, seconds: $2) }
             deck.onFirstPlay = { [weak library, weak deck] t in
@@ -71,6 +80,24 @@ final class AppModel: ObservableObject {
     }
 
     func deck(_ id: DeckID) -> DeckState { id == .a ? deckA : deckB }
+
+    /// Starting one app pauses the other (a setting shared through the store; on by default).
+    var exclusive: Bool { library.setting(StoreEvents.exclusiveKey) != "0" }
+
+    /// Hand tracks to Platter Player: play them now, next, or add them to its queue. Opens
+    /// the player when it is not running.
+    func sendToPlayer(_ tracks: [Track], mode: PlayerLink.Mode) {
+        guard !tracks.isEmpty, let url = PlayerLink.url(tracks.map(\.id), mode: mode) else { return }
+        let sibling = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Platter Player.app")
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: PlayerLink.bundleID)
+                ?? (FileManager.default.fileExists(atPath: sibling.path) ? sibling : nil) else {
+            error = "Platter Player is not installed. Build it with ./run.sh player."
+            return
+        }
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, err in
+            if let err { Task { @MainActor in self.error = "Could not open Platter Player: \(err.localizedDescription)" } }
+        }
+    }
 
     /// SYNC on `id`: match its tempo and beat phase to the other deck.
     func sync(_ id: DeckID) {
@@ -137,8 +164,8 @@ final class AppModel: ObservableObject {
             }
         }
         Task {
-            guard let track = library.tracks.first(where: \.isCached) else {
-                self.error = "Bench: no downloaded track in the selected list."
+            guard let track = library.allTracks().first(where: \.isCached) else {
+                self.error = "Bench: no downloaded track in the library."
                 return
             }
             for d in [deckA, deckB] {
@@ -159,12 +186,19 @@ final class AppModel: ObservableObject {
     }
 }
 
+/// Closing the window keeps the app and the decks running (a single `Window` scene would
+/// otherwise quit the app). A Dock click opens the window again.
+final class PlatterAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
 @main
 struct PlatterApp: App {
     @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(PlatterAppDelegate.self) private var delegate
 
     var body: some Scene {
-        WindowGroup {
+        Window("Platter", id: "dj") {
             PlatterRootView(model: model)
                 .frame(minWidth: 1240, minHeight: 800)
                 .preferredColorScheme(.dark)

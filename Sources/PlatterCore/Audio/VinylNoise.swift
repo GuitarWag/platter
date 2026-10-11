@@ -9,41 +9,41 @@ import os
 /// The main thread sets the amount and the groove speed (1 = normal play); the render thread
 /// makes the noise. While scratching, the speed comes from the hand and falls to 0 when the
 /// hand stops.
-final class VinylNoise: @unchecked Sendable {
+package final class VinylNoise: @unchecked Sendable {
     /// Seconds of groove per turn at 33 1/3 RPM.
-    static let secondsPerTurn = 1.8
+    package static let secondsPerTurn = 1.8
 
     private struct State {
-        var amount: Float = 0
-        var target: Double = 0         // groove speed the main thread asks for
-        var speed: Double = 0          // smoothed, used for rendering
-        var scratching = false
-        var groove: Double = 0         // groove position, seconds
-        var damage: [(turnFraction: Double, level: Float)] = []
-        var rng: UInt64 = 0x9E37_79B9_7F4A_7C15
-        var click: Float = 0           // decaying click energy
-        var clickSign: Float = 1
-        var pop: Float = 0
-        var hp: (x: Float, y: Float) = (0, 0)   // high-pass for ticks and hiss
-        var rumble: Float = 0
+        package var amount: Float = 0
+        package var target: Double = 0         // groove speed the main thread asks for
+        package var speed: Double = 0          // smoothed, used for rendering
+        package var scratching = false
+        package var groove: Double = 0         // groove position, seconds
+        package var damage: [(turnFraction: Double, level: Float)] = []
+        package var rng: UInt64 = 0x9E37_79B9_7F4A_7C15
+        package var click: Float = 0           // decaying click energy
+        package var clickSign: Float = 1
+        package var pop: Float = 0
+        package var hp: (x: Float, y: Float) = (0, 0)   // high-pass for ticks and hiss
+        package var rumble: Float = 0
     }
 
     private let state = OSAllocatedUnfairLock(uncheckedState: State())
-    let format: AVAudioFormat
+    package let format: AVAudioFormat
 
-    init(sampleRate: Double) {
+    package init(sampleRate: Double) {
         format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
         newRecord(seed: "")
     }
 
     /// 0 = off ... 1 = a well-worn record.
-    var amount: Float {
+    package var amount: Float {
         get { state.withLockUnchecked { $0.amount } }
         set { state.withLockUnchecked { $0.amount = min(1, max(0, newValue)) } }
     }
 
     /// A new record on the platter: new groove damage, from `seed` (the track id).
-    func newRecord(seed: String) {
+    package func newRecord(seed: String) {
         var rng = SeededRandom(seed + "vinyl")
         let marks = (0..<2).map { _ in
             (turnFraction: Double.random(in: 0..<1, using: &rng), level: Float.random(in: 0.25...0.5, using: &rng))
@@ -55,7 +55,7 @@ final class VinylNoise: @unchecked Sendable {
     }
 
     /// Normal play at `speed` (the deck's tempo; 0 when stopped).
-    func setSpeed(_ speed: Double) {
+    package func setSpeed(_ speed: Double) {
         state.withLockUnchecked {
             $0.scratching = false
             $0.target = speed
@@ -64,7 +64,7 @@ final class VinylNoise: @unchecked Sendable {
 
     /// The hand on the record: `speed` in groove seconds per second (negative = backward).
     /// Falls to 0 when no new value comes.
-    func scratchSpeed(_ speed: Double) {
+    package func scratchSpeed(_ speed: Double) {
         state.withLockUnchecked {
             $0.scratching = true
             $0.target = min(8, max(-8, speed))
@@ -72,7 +72,7 @@ final class VinylNoise: @unchecked Sendable {
     }
 
     /// Render thread.
-    func render(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames n: Int) {
+    package func render(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames n: Int) {
         state.withLockUnchecked { s in
             guard s.amount > 0, abs(s.speed) > 1e-4 || abs(s.target) > 1e-4 else {
                 l.update(repeating: 0, count: n)
@@ -123,7 +123,7 @@ final class VinylNoise: @unchecked Sendable {
         }
     }
 
-    nonisolated func makeNode() -> AVAudioSourceNode {
+    package nonisolated func makeNode() -> AVAudioSourceNode {
         AVAudioSourceNode(format: format) { [self] _, _, frameCount, bufferList in
             let abl = UnsafeMutableAudioBufferListPointer(bufferList)
             guard abl.count >= 2,

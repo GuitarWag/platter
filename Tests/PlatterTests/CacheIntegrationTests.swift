@@ -1,6 +1,8 @@
 import XCTest
 import AVFoundation
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 /// The analysis path (decode, peaks, grid, key) on a real music file. Set
 /// `PLATTER_TEST_TRACK=/path/to/song.m4a` to run it; tests never read the app's own library.

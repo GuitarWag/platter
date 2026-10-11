@@ -1,5 +1,7 @@
 import XCTest
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 final class ScratchTests: XCTestCase {
     /// A 1 kHz tone; the voice's output level tells whether the record moves.

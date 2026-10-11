@@ -1,5 +1,7 @@
 import XCTest
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 /// End-to-end test of YTDLP.run() against the network: proves the concurrent pipe-drain fix
 /// actually unblocks the large-output resolve case (the ~250 KB playlist dump that deadlocked

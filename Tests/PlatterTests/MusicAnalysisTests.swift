@@ -1,5 +1,7 @@
 import XCTest
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 final class BeatGridTests: XCTestCase {
     /// A kick-like hit (decaying 60 Hz sine) every beat, plus a quieter off-beat hat.

@@ -1,4 +1,5 @@
 import SwiftUI
+import PlatterCore
 
 /// One deck: the display (track, BPM, pitch, time, overview), the turntable, and the
 /// transport row (CUE, PLAY, hot cues, pitch mode, bend).

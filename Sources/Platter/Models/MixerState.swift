@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import PlatterCore
 
 /// The center mixer: crossfader plus per-channel level and 3-band EQ.
 /// `crossfader` is 0 (deck A hard in) to 1 (deck B hard in).
@@ -117,24 +118,3 @@ final class MixerState: ObservableObject {
     }
 }
 
-/// The effect on a channel.
-enum ChannelFX: String, CaseIterable {
-    case off, echo, reverb
-
-    var label: String {
-        switch self {
-        case .off: return "FX OFF"
-        case .echo: return "ECHO"
-        case .reverb: return "REVERB"
-        }
-    }
-
-    var next: ChannelFX {
-        let all = Self.allCases
-        return all[(all.firstIndex(of: self)! + 1) % all.count]
-    }
-}
-
-enum EQBand: String, CaseIterable {
-    case low, mid, high
-}

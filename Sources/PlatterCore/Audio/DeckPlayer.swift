@@ -14,14 +14,14 @@ import AVFoundation
 /// loop body are kept queued (a new one each time the player has read one). The playhead
 /// folds back into the loop.
 @MainActor
-final class DeckPlayer {
+package final class DeckPlayer {
     private unowned let engine: AudioEngine
     private let player: AVAudioPlayerNode
     private let varispeed: AVAudioUnitVarispeed
     private let timePitch: AVAudioUnitTimePitch
     private let scratchVoice: ScratchVoice
     /// The record surface noise. Its speed follows the platter.
-    let vinyl: VinylNoise
+    package let vinyl: VinylNoise
     private var pitchRate: Float = 1
     private var pitchMode: PitchMode = .varispeed
     /// Wow and flutter: a tiny tempo wobble, only while vinyl noise is on.
@@ -44,15 +44,15 @@ final class DeckPlayer {
     private var generation = 0
 
     /// The active loop, in file frames.
-    private(set) var loop: Range<AVAudioFramePosition>?
+    package private(set) var loop: Range<AVAudioFramePosition>?
     /// Loop bodies kept queued ahead of the playhead.
     private static let queuedLoopBodies = 3
 
-    private(set) var isPlaying = false
+    package private(set) var isPlaying = false
     /// Called when playback reaches the end of the file.
-    var onEnd: (() -> Void)?
+    package var onEnd: (() -> Void)?
 
-    init(engine: AudioEngine, player: AVAudioPlayerNode, varispeed: AVAudioUnitVarispeed,
+    package init(engine: AudioEngine, player: AVAudioPlayerNode, varispeed: AVAudioUnitVarispeed,
          timePitch: AVAudioUnitTimePitch, scratch: ScratchVoice, vinyl: VinylNoise) {
         self.engine = engine
         self.player = player
@@ -63,19 +63,19 @@ final class DeckPlayer {
         setPitch(rate: 1, mode: .varispeed)
     }
 
-    var hasTrack: Bool { file != nil }
+    package var hasTrack: Bool { file != nil }
 
-    var duration: TimeInterval {
+    package var duration: TimeInterval {
         guard let file else { return 0 }
         return Double(file.length) / sampleRate
     }
 
     /// The active loop in seconds.
-    var loopSeconds: ClosedRange<Double>? {
+    package var loopSeconds: ClosedRange<Double>? {
         loop.map { Double($0.lowerBound) / sampleRate...Double($0.upperBound) / sampleRate }
     }
 
-    var position: TimeInterval {
+    package var position: TimeInterval {
         guard file != nil else { return 0 }
         if let scratchPosition { return scratchPosition }
         var frame = Double(startFrame)
@@ -94,7 +94,7 @@ final class DeckPlayer {
         return t
     }
 
-    func load(_ url: URL) throws {
+    package func load(_ url: URL) throws {
         let f = try AVAudioFile(forReading: url)
         endScratch()
         isPlaying = false
@@ -108,7 +108,7 @@ final class DeckPlayer {
         schedule()
     }
 
-    func play() {
+    package func play() {
         guard let file, !isPlaying else { return }
         if !engine.isRunning {
             do { try engine.start() } catch { return }
@@ -123,7 +123,7 @@ final class DeckPlayer {
         startWow()
     }
 
-    func pause() {
+    package func pause() {
         guard isPlaying else { return }
         startFrame = frame(at: position)
         isPlaying = false
@@ -132,7 +132,7 @@ final class DeckPlayer {
     }
 
     /// Jump to `seconds`. A jump out of the active loop ends the loop.
-    func seek(to seconds: TimeInterval) {
+    package func seek(to seconds: TimeInterval) {
         guard file != nil else { return }
         let target = frame(at: seconds)
         if let loop, !loop.contains(target) { self.loop = nil }
@@ -141,7 +141,7 @@ final class DeckPlayer {
 
     /// Loop `start ..< end` (seconds). The playhead stays where it is when it is inside the
     /// loop, else it jumps to the loop start.
-    func setLoop(from start: Double, to end: Double) {
+    package func setLoop(from start: Double, to end: Double) {
         guard let file else { return }
         let s = frame(at: start), e = min(file.length, frame(at: end))
         guard e - s >= AVAudioFramePosition(sampleRate * 0.05) else { return }
@@ -151,7 +151,7 @@ final class DeckPlayer {
     }
 
     /// Leave the loop and play on from the current position.
-    func clearLoop() {
+    package func clearLoop() {
         guard loop != nil else { return }
         let pos = frame(at: position)
         loop = nil
@@ -162,7 +162,7 @@ final class DeckPlayer {
 
     /// The hand is on the record. Stops the player (the caller pauses first) and starts the
     /// scratch voice; its audio window decodes in the background.
-    func beginScratch() {
+    package func beginScratch() {
         guard let url = fileURL, file != nil, !isPlaying else { return }
         let pos = position
         scratchPosition = pos
@@ -179,7 +179,7 @@ final class DeckPlayer {
     }
 
     /// Move the record to `seconds` under the hand.
-    func scratch(to seconds: Double) {
+    package func scratch(to seconds: Double) {
         guard scratchPosition != nil else { return }
         let t = min(duration, max(0, seconds))
         scratchPosition = t
@@ -192,7 +192,7 @@ final class DeckPlayer {
     }
 
     /// The hand lets go: the player continues from where the record is now.
-    func endScratch() {
+    package func endScratch() {
         guard let t = scratchPosition else { return }
         scratchLoad?.cancel()
         scratchVoice.end()
@@ -204,7 +204,7 @@ final class DeckPlayer {
 
     /// The engine restarted for a new output device and stopped the player. Stay paused at the
     /// last known position.
-    func engineRestarted() {
+    package func engineRestarted() {
         guard file != nil else { return }
         if isPlaying { startFrame = frame(at: lastPosition) }
         isPlaying = false
@@ -216,7 +216,7 @@ final class DeckPlayer {
     ///   - keyLock:   tempo follows the fader, pitch is held.
     ///   - bpmShift:  tempo is held, pitch follows the fader.
     /// A node at its neutral setting is bypassed, so it adds no processing.
-    func setPitch(rate: Float, mode: PitchMode) {
+    package func setPitch(rate: Float, mode: PitchMode) {
         pitchRate = rate
         pitchMode = mode
         applyRates()

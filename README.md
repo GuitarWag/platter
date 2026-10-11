@@ -20,11 +20,12 @@ anonymously.
 ## Run
 
 ```sh
-./run.sh
+./run.sh          # the DJ rig
+./run.sh player   # Platter Player, the music player
 ```
 
-This builds (release), packages `./Platter.app`, and opens it with a Dock icon. Quit a
-running copy first (⌘Q): when the app is already open, `open` only brings it to the front.
+This builds both apps (release), packages `./Platter.app` and `./Platter Player.app`, and
+opens one with a Dock icon. It quits a running copy first, so the new build opens.
 
 Tests (DSP, analysis, sync, mix planning, scratch, vinyl noise, parser, database, and the
 audio graph rendered offline, with no sound):
@@ -41,7 +42,8 @@ CPU with both decks playing (starts a second, silent copy of the app for about 2
 window comes to the front, because a hidden window is not drawn):
 
 ```sh
-scripts/bench.sh
+scripts/bench.sh            # DJ rig, both decks
+scripts/bench.sh player 0   # music player; 0 spectrum, 1 scope, 2 no visualizer
 ```
 
 ## How it works
@@ -114,6 +116,40 @@ resize).
   beat, syncs it in key lock, swaps the basses halfway, and lets the tempo glide back to the
   track's own. Without Beatmix it crossfades over the last `FADE` seconds.
 
+## Platter Player
+
+Platter Player is a second app in this repo. It uses the same audio engine (`PlatterCore`)
+and the same library and audio store, so YouTube playlists, downloads, analysis, ratings,
+and local files show in both apps. A change in one app shows in the other at once. By
+default, when one app starts to play, the other pauses (menu: "Pause the other app when one
+starts").
+
+- **Main panel:** time (click for remaining), scrolling title, format, seek bar, transport,
+  volume and balance, shuffle, repeat (off, all, one), and the crossfade menu: gapless, or a
+  2 to 12 s crossfade; volume leveling between tracks.
+- **Visualizer:** spectrum bars with peak hold or an oscilloscope; click to switch or turn off.
+- **EQ panel:** 10 bands (60 Hz to 16 kHz), preamp, presets, and the response curve.
+- **Library panel (LIB):** albums with cover art and artists; double-click to play,
+  right-click to play next or add to the queue.
+- **Playlist panel (PL):** the saved queue. Search, drag to reorder, Delete to remove, drop
+  audio files or a YouTube playlist link to add, or Add → YouTube playlist URL.
+- **Shade:** folds the window into one bar.
+- **macOS:** Now Playing in Control Center, media keys and AirPods, a menu bar mini player,
+  and a Dock menu. Closing the windows keeps the music playing.
+- **Keys** (player window): `Z` previous, `X` play, `C` pause, `V` stop, `B` next, space,
+  `←` `→` seek 5 s, `↑` `↓` volume.
+- **Skins** (Skins menu): Platter (the panels above); Chrome and Ruby, shaped skins in the
+  style of the year 2000; and classic Winamp 2 skins. Get `.wsz` files from
+  [skins.webamp.org](https://skins.webamp.org) and add them with Skins → Add Classic Skin.
+  A classic skin draws the main window (time, title, spectrum, volume, balance, seek,
+  transport, shuffle, repeat), at 1x like Winamp (Skins → Double Size, ⌃D, for 2x), and its EQ and PL buttons dock the skin's equalizer and
+  playlist windows below it. Platter ships no classic skins: they are the artwork of their
+  authors. Shaped skins use a borderless window; drag the artwork to move it.
+
+From the DJ library, right-click a track → Platter Player to play it, play it next, or queue
+it. Tracks have ratings (right-click → Rating) and play counts; smart albums can filter on
+both.
+
 ## Keyboard
 
 Keys work when no text field has focus.
@@ -149,5 +185,6 @@ safe choice for anything public.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Platter is not affiliated with Pioneer DJ, AlphaTheta, or
+MIT, see [LICENSE](LICENSE). The sprite positions of classic skins follow
+[Webamp](https://github.com/captbaritone/webamp) (MIT). Platter is not affiliated with Pioneer DJ, AlphaTheta, or
 Technics; product names mentioned are the trademarks of their owners.

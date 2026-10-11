@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import PlatterCore
 
 /// State of one track in the Auto DJ queue.
 enum QueueItemState {
