@@ -95,6 +95,7 @@ struct PlayerWindowView: View {
 /// The Skins menu: built-in skins, classic skins from the skins folder, and adding more.
 struct SkinCommands: Commands {
     @AppStorage("player.skin") private var skinKey = "platter"
+    @AppStorage("classic.double") private var doubleSize = false
     @ObservedObject var library: SkinLibrary
 
     var body: some Commands {
@@ -111,6 +112,7 @@ struct SkinCommands: Commands {
                 }
             }
             .pickerStyle(.inline)
+            Toggle("Double Size (classic skins)", isOn: $doubleSize).keyboardShortcut("d", modifiers: .control)
             Divider()
             Button("Add Classic Skin…") { library.add() }
             Button("Open Skins Folder") { NSWorkspace.shared.open(SkinLibrary.folder) }

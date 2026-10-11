@@ -162,7 +162,7 @@ struct ClassicSkinView: View {
             if let skin {
                 ClassicMainWindow(model: model, skin: skin)
             } else {
-                Color.clear.frame(width: 550, height: 232)
+                Color.clear.frame(width: 275, height: 116)
             }
         }
         .task(id: file) {
@@ -186,7 +186,9 @@ struct ClassicMainWindow: View {
     @State private var peaks = PeakHold()
     @AppStorage("classic.eq") private var showEQ = false
     @AppStorage("classic.pl") private var showPL = false
-    static let scale: CGFloat = 2
+    @AppStorage("classic.double") private var doubleSize = false
+    /// 1x like Winamp (one skin pixel per point, sharp on Retina); Skins → Double Size for 2x.
+    static var scale: CGFloat { UserDefaults.standard.bool(forKey: "classic.double") ? 2 : 1 }
 
     init(model: PlayerAppModel, skin: ClassicSkin) {
         self.model = model
@@ -200,6 +202,7 @@ struct ClassicMainWindow: View {
             if showEQ { ClassicEQWindow(skin: skin, player: player, shown: $showEQ) }
             if showPL { ClassicPlaylistWindow(skin: skin, player: player, shown: $showPL) }
         }
+        .id(doubleSize) // rebuild every window at the new scale
         .onAppear { model.engine.playerViz.enabled = true }
     }
 

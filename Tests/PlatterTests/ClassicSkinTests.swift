@@ -111,8 +111,8 @@ final class ClassicSkinTests: XCTestCase {
         for (name, s) in [("classic", skin), ("classic-real", real)] {
             guard let s else { continue }
             let image = try XCTUnwrap(ImageRenderer(content: ClassicMainWindow(model: model, skin: s)).cgImage)
-            XCTAssertEqual(image.width, 550)
-            XCTAssertEqual(image.height, 2 * (116 + 116 + 174), "main, EQ, and playlist")
+            XCTAssertEqual(image.width, 275, "1x by default")
+            XCTAssertEqual(image.height, 116 + 116 + 174, "main, EQ, and playlist")
             if let out = env["PLATTER_RENDER_DIR"],
                let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
                 try png.write(to: URL(fileURLWithPath: out).appendingPathComponent("\(name).png"))

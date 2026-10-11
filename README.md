@@ -142,7 +142,7 @@ starts").
   style of the year 2000; and classic Winamp 2 skins. Get `.wsz` files from
   [skins.webamp.org](https://skins.webamp.org) and add them with Skins → Add Classic Skin.
   A classic skin draws the main window (time, title, spectrum, volume, balance, seek,
-  transport, shuffle, repeat), and its EQ and PL buttons dock the skin's equalizer and
+  transport, shuffle, repeat), at 1x like Winamp (Skins → Double Size, ⌃D, for 2x), and its EQ and PL buttons dock the skin's equalizer and
   playlist windows below it. Platter ships no classic skins: they are the artwork of their
   authors. Shaped skins use a borderless window; drag the artwork to move it.
 
