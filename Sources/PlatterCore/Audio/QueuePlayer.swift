@@ -58,6 +58,11 @@ package final class QueuePlayer {
     package var onAdvance: (() -> Void)?
     /// The current track ended with no next track.
     package var onEnd: (() -> Void)?
+    /// The node that still fades out the previous track, and its fade.
+    private var fading: Int?
+    private var fadeTask: Task<Void, Never>?
+    /// The position at the last monitor tick, to resume after an engine restart.
+    private var lastPosition: Double = 0
 
     package init(engine: AudioEngine, nodes: [AVAudioPlayerNode], clock: AVAudioNode) {
         self.engine = engine
@@ -142,6 +147,16 @@ package final class QueuePlayer {
         replanNext()
     }
 
+    /// A new output device restarted the engine: its clock starts again at 0, and the nodes
+    /// are stopped. Play on from the last known position.
+    package func engineRestarted() {
+        guard isPlaying else { return }
+        let pos = lastPosition
+        stopAll()
+        voices[current].startFrame = frame(pos)
+        play()
+    }
+
     // MARK: Planning
 
     private func start(_ i: Int, at time: AVAudioFramePosition) {
@@ -167,8 +182,10 @@ package final class QueuePlayer {
     /// Put the next track on the other node, timed to start at the end of the current one
     /// (minus the crossfade).
     private func replanNext() {
-        nodes[other].stop()
         nextScheduled = false
+        // The other node still fades out the previous track: plan when the fade ends.
+        guard fading != other else { return }
+        nodes[other].stop()
         guard isPlaying, let next, let end = currentEnd, let now = now(),
               let f = try? AVAudioFile(forReading: next.url) else { return }
         let fade = AVAudioFramePosition(min(crossfade, duration / 2) * outRate)
@@ -192,6 +209,7 @@ package final class QueuePlayer {
 
     private func tick() {
         guard let now = now(), let end = currentEnd else { return }
+        lastPosition = position
         if nextScheduled {
             // The next track has started (sample-accurate on the engine clock): it is now
             // the current one. With a crossfade the old one keeps playing and fades out.
@@ -227,22 +245,29 @@ package final class QueuePlayer {
 
     private func fadeOut(_ i: Int, until end: AVAudioFramePosition) {
         let start = voices[current].startTime
-        Task { [weak self] in
+        fading = i
+        fadeTask?.cancel()
+        fadeTask = Task { [weak self] in
             while let self, !Task.isCancelled, let now = self.now(), now < end {
                 let p = min(1, Double(now - start) / Double(max(1, end - start)))
                 self.nodes[i].volume = self.voices[i].gain * Float(cos(p * .pi / 2))
                 self.nodes[self.current].volume = self.voices[self.current].gain * Float(sin(p * .pi / 2))
                 try? await Task.sleep(for: .milliseconds(20))
             }
-            guard let self else { return }
-            if self.current != i { self.nodes[i].stop() }
+            guard let self, !Task.isCancelled else { return }
+            self.fading = nil
+            self.nodes[i].stop()
             self.nodes[self.current].volume = self.voices[self.current].gain
+            self.replanNext() // the node is free for the track after this one
         }
     }
 
     private func stopAll() {
         monitor?.cancel()
         monitor = nil
+        fadeTask?.cancel()
+        fadeTask = nil
+        fading = nil
         nodes.forEach { $0.stop() }
         nextScheduled = false
         isPlaying = false

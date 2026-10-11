@@ -46,7 +46,7 @@ final class ClassicSkinTests: XCTestCase {
     }
 
     /// A generated skin: upper-case names in a folder inside the zip, as many real skins have.
-    func testLoadAndRender() throws {
+    func testLoadAndRender() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let inner = dir.appendingPathComponent("src/MySkin")
         try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
@@ -80,7 +80,7 @@ final class ClassicSkinTests: XCTestCase {
         try zip.run()
         zip.waitUntilExit()
 
-        let skin = try ClassicSkin(url: wsz)
+        let skin = try await ClassicSkin.load(wsz)
         XCTAssertNotNil(skin.sprite("main", 0, 0, 275, 116))
         XCTAssertNotNil(skin.sprite("cbuttons", 23, 18, 23, 18))
         XCTAssertNil(skin.sprite("cbuttons", 130, 30, 23, 18), "past the edge of the sheet")
@@ -90,7 +90,21 @@ final class ClassicSkinTests: XCTestCase {
 
         let notSkin = dir.appendingPathComponent("Empty.wsz")
         try Data("not a zip".utf8).write(to: notSkin)
-        XCTAssertThrowsError(try ClassicSkin(url: notSkin))
+        await XCTAssertThrowsAsync(try await ClassicSkin.load(notSkin))
+
+        // A symlink entry is skipped: main.bmp -> /dev/zero would read without end.
+        let evil = dir.appendingPathComponent("evil")
+        try FileManager.default.createDirectory(at: evil, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: evil.appendingPathComponent("main.bmp").path,
+                                                   withDestinationPath: "/dev/zero")
+        let evilZip = dir.appendingPathComponent("Evil.wsz")
+        let zipLink = Process()
+        zipLink.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        zipLink.currentDirectoryURL = evil
+        zipLink.arguments = ["-qy", evilZip.path, "main.bmp"] // -y stores the link itself
+        try zipLink.run()
+        zipLink.waitUntilExit()
+        await XCTAssertThrowsAsync(try await ClassicSkin.load(evilZip))
 
         let library = Library(db: try LibraryDB(path: ":memory:"), audioDirectory: dir)
         let engine = AudioEngine(decks: false, offline: AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 2)!)
@@ -107,7 +121,8 @@ final class ClassicSkinTests: XCTestCase {
 
         // PLATTER_TEST_WSZ: also render a real skin, for a look.
         let env = ProcessInfo.processInfo.environment
-        let real = try env["PLATTER_TEST_WSZ"].map { try ClassicSkin(url: URL(fileURLWithPath: $0)) }
+        var real: ClassicSkin?
+        if let path = env["PLATTER_TEST_WSZ"] { real = try await ClassicSkin.load(URL(fileURLWithPath: path)) }
         for (name, s) in [("classic", skin), ("classic-real", real)] {
             guard let s else { continue }
             let image = try XCTUnwrap(ImageRenderer(content: ClassicMainWindow(model: model, skin: s)).cgImage)
@@ -119,4 +134,8 @@ final class ClassicSkinTests: XCTestCase {
             }
         }
     }
+}
+
+private func XCTAssertThrowsAsync<T>(_ body: @autoclosure () async throws -> T, file: StaticString = #filePath, line: UInt = #line) async {
+    do { _ = try await body(); XCTFail("expected an error", file: file, line: line) } catch {}
 }

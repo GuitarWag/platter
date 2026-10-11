@@ -16,12 +16,16 @@ package final class LibraryDB {
         db = try Database(path)
         conn = try db.connect()
         _ = try first("PRAGMA journal_mode=WAL") { $0.text(0) }
+        // Two apps write this file: wait for the other's write instead of failing "locked".
+        _ = try first("PRAGMA busy_timeout=3000") { $0.int(0) }
         _ = try conn.execute("PRAGMA foreign_keys=ON")
         try migrate()
     }
 
     // MARK: Schema
 
+    // ponytail: the version is read outside a write lock; two apps that start at the same
+    // moment on an old schema could both migrate. Use BEGIN IMMEDIATE if that ever matters.
     private func migrate() throws {
         let version = try first("PRAGMA user_version") { $0.int(0) } ?? 0
         if version < 1 { try conn.executeBatch(Self.schemaV1) }

@@ -86,7 +86,7 @@ package enum Spectrum {
         let e = edges(bands: bands)
         let binHz = sampleRate / Double(n)
         return (0..<bands).map { b in
-            let lo = max(1, Int(e[b] / binHz)), hi = max(lo + 1, Int(e[b + 1] / binHz))
+            let lo = min(mag.count - 1, max(1, Int(e[b] / binHz))), hi = max(lo + 1, Int(e[b + 1] / binHz)) // bands above Nyquist use the top bin
             let peak = mag[lo..<min(hi, mag.count)].max() ?? 0
             let db = 20 * log10(max(1e-9, peak / fullScale))
             return Float(min(1, max(0, (db + 60) / 60)))

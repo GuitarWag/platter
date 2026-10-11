@@ -112,7 +112,8 @@ package final class Library: ObservableObject {
     package init(db: LibraryDB, audioDirectory: URL = AppPaths.audio) {
         self.db = db
         self.audioDirectory = audioDirectory
-        importLegacyLibraryIfNeeded()
+        // Only the real library imports the old library.json: a test library must not touch it.
+        if audioDirectory.standardizedFileURL == AppPaths.audio.standardizedFileURL { importLegacyLibraryIfNeeded() }
         removeStaleDownloadFiles()
         albums = (try? db.albums()) ?? []
         smartAlbums = (try? db.smartAlbums()) ?? []
@@ -542,12 +543,17 @@ package final class Library: ObservableObject {
     }
 
     /// Remove what old or killed yt-dlp runs left in the audio folder: temp folders, partial
-    /// downloads, and source files that never became m4a.
+    /// downloads, and source files that never became m4a. Only files untouched for an hour:
+    /// the other app (DJ or player) can be downloading into this folder right now.
     private func removeStaleDownloadFiles() {
         let fm = FileManager.default
         guard let names = try? fm.contentsOfDirectory(atPath: audioDirectory.path) else { return }
+        let cutoff = Date().addingTimeInterval(-3600)
         for name in names where name.hasPrefix(".tmp-") || name.hasSuffix(".part") || name.hasSuffix(".webm") {
-            try? fm.removeItem(at: audioDirectory.appendingPathComponent(name))
+            let url = audioDirectory.appendingPathComponent(name)
+            guard let modified = (try? fm.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date,
+                  modified < cutoff else { continue }
+            try? fm.removeItem(at: url)
         }
     }
 

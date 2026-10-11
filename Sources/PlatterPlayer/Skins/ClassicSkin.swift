@@ -17,33 +17,67 @@ final class ClassicSkin {
     /// pledit.txt: Normal, Current, NormalBG, SelectedBG (lower-cased keys).
     let playlistStyle: [String: String]
 
-    init(url: URL) throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("platter-skin-" + UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
+    /// Load a skin file. Reading the archive runs off the main thread.
+    static func load(_ url: URL) async throws -> ClassicSkin {
+        let files = try await Task.detached { try ClassicSkin.readFiles(url) }.value
+        return try ClassicSkin(files: files, name: url.lastPathComponent)
+    }
+
+    /// The .bmp and .txt files of a skin archive, by lower-cased name. A skin is untrusted
+    /// input: the archive and each file have a size limit, and only regular files are read
+    /// (a symlink entry could point at /dev/zero or at a private file).
+    nonisolated static func readFiles(_ url: URL) throws -> [String: Data] {
+        let notSkin = LoadError(errorDescription: "\(url.lastPathComponent) is not a classic skin.")
+        // The totals line: "32 files, 367174 bytes uncompressed, 97371 bytes compressed: 73.5%".
+        let totals = try run(["-Zt", url.path])
+        guard let bytes = totals.split(separator: ",").first(where: { $0.contains("bytes uncompressed") })?
+                .split(separator: " ").first.flatMap({ Int($0) }) else { throw notSkin }
+        guard bytes <= 16 << 20 else { throw LoadError(errorDescription: "\(url.lastPathComponent) is too large for a skin.") }
+
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appendingPathComponent("platter-skin-" + UUID().uuidString)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
         // -j drops the folders inside the zip, so no entry can land outside `dir`.
         // -C matches the patterns in any case (MAIN.BMP, Main.bmp).
+        _ = try run(["-qq", "-o", "-j", "-C", url.path, "*.bmp", "*.txt", "-d", dir.path])
+        var files: [String: Data] = [:]
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            let path = dir.appendingPathComponent(name).path
+            guard let attrs = try? fm.attributesOfItem(atPath: path), // does not follow symlinks
+                  attrs[.type] as? FileAttributeType == .typeRegular,
+                  (attrs[.size] as? Int ?? .max) <= 4 << 20 else { continue }
+            files[name.lowercased()] = fm.contents(atPath: path)
+        }
+        return files
+    }
+
+    /// Run /usr/bin/unzip and return what it prints.
+    private nonisolated static func run(_ args: [String]) throws -> String {
         let unzip = Process()
         unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        unzip.arguments = ["-qq", "-o", "-j", "-C", url.path, "*.bmp", "*.txt", "-d", dir.path]
-        unzip.standardOutput = FileHandle.nullDevice
+        unzip.arguments = args
+        let out = Pipe()
+        unzip.standardOutput = out
         unzip.standardError = FileHandle.nullDevice
         try unzip.run()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
         unzip.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
 
+    init(files: [String: Data], name: String) throws {
         var sheets: [String: CGImage] = [:]
         var texts: [String: String] = [:]
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] {
-            let file = dir.appendingPathComponent(name)
-            let key = name.lowercased()
+        for (key, data) in files {
             if key.hasSuffix(".bmp") {
-                sheets[String(key.dropLast(4))] = (try? Data(contentsOf: file)).flatMap { NSBitmapImageRep(data: $0)?.cgImage }
+                sheets[String(key.dropLast(4))] = NSBitmapImageRep(data: data)?.cgImage
             } else {
-                texts[key] = try? String(contentsOf: file, encoding: .isoLatin1)
+                texts[key] = String(data: data, encoding: .isoLatin1)
             }
         }
         guard sheets["main"] != nil else {
-            throw LoadError(errorDescription: "\(url.lastPathComponent) is not a classic skin (no main.bmp).")
+            throw LoadError(errorDescription: "\(name) is not a classic skin (no main.bmp).")
         }
         self.sheets = sheets
         visColors = Self.parseVisColors(texts["viscolor.txt"] ?? "").map {
@@ -167,7 +201,7 @@ struct ClassicSkinView: View {
         }
         .task(id: file) {
             do {
-                skin = try ClassicSkin(url: SkinLibrary.folder.appendingPathComponent(file))
+                skin = try await ClassicSkin.load(SkinLibrary.folder.appendingPathComponent(file))
             } catch {
                 model.error = "Skin: \(error.localizedDescription)"
                 skinKey = "platter"

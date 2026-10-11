@@ -186,9 +186,16 @@ final class AppModel: ObservableObject {
     }
 }
 
+/// Closing the window keeps the app and the decks running (a single `Window` scene would
+/// otherwise quit the app). A Dock click opens the window again.
+final class PlatterAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
 @main
 struct PlatterApp: App {
     @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(PlatterAppDelegate.self) private var delegate
 
     var body: some Scene {
         Window("Platter", id: "dj") {

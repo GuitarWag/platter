@@ -9,8 +9,6 @@ package final class StoreEvents {
     package enum Event: String {
         case libraryChanged = "local.platter.library-changed"
         case willPlay = "local.platter.will-play"
-
-        var name: Notification.Name { Notification.Name(rawValue) }
     }
 
     /// Sender id: the process, so an app ignores its own messages.
@@ -18,28 +16,33 @@ package final class StoreEvents {
     private let center = DistributedNotificationCenter.default()
     private var observers: [NSObjectProtocol] = []
     private var pending: Task<Void, Never>?
+    /// Appended to the notification names. Tests use their own, so the running apps do not
+    /// hear them.
+    private let channel: String
 
-    package init() {}
+    package init(channel: String = "") { self.channel = channel }
+
+    private func name(_ event: Event) -> Notification.Name { Notification.Name(event.rawValue + channel) }
 
     /// Post now (willPlay), or after 300 ms of quiet (libraryChanged: a burst of writes,
     /// like a playlist import, sends one message).
     package func post(_ event: Event) {
         guard event == .libraryChanged else {
-            center.postNotificationName(event.name, object: me, userInfo: nil, deliverImmediately: true)
+            center.postNotificationName(name(event), object: me, userInfo: nil, deliverImmediately: true)
             return
         }
         pending?.cancel()
         pending = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(300))
             guard let self, !Task.isCancelled else { return }
-            self.center.postNotificationName(event.name, object: self.me, userInfo: nil, deliverImmediately: true)
+            self.center.postNotificationName(self.name(event), object: self.me, userInfo: nil, deliverImmediately: true)
         }
     }
 
     /// Run `handler` when the other app posts `event`.
     package func observe(_ event: Event, _ handler: @escaping @MainActor () -> Void) {
         let me = self.me
-        observers.append(center.addObserver(forName: event.name, object: nil, queue: .main) { note in
+        observers.append(center.addObserver(forName: name(event), object: nil, queue: .main) { note in
             guard (note.object as? String) != me else { return }
             MainActor.assumeIsolated { handler() }
         })

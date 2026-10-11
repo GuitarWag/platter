@@ -151,7 +151,7 @@ final class PlayerState: ObservableObject {
         let currentID = currentIndex.map { queue[$0].id }
         queue.remove(atOffsets: offsets)
         currentIndex = removingCurrent ? nil : currentID.flatMap { id in queue.firstIndex { $0.id == id } }
-        if removingCurrent { player.stop(); isPlaying = false }
+        if removingCurrent { loadToken = UUID(); player.stop(); isPlaying = false }
         reorder()
         save()
         planNext()
@@ -167,6 +167,7 @@ final class PlayerState: ObservableObject {
     }
 
     func clear() {
+        loadToken = UUID() // a track that is still loading must not start
         player.stop()
         queue = []
         currentIndex = nil
@@ -182,12 +183,15 @@ final class PlayerState: ObservableObject {
         let token = UUID()
         loadToken = token
         currentIndex = index
-        let track = queue[index].track
+        let track = queue[index].track, entryID = queue[index].id
         loadingTitle = track.title
         Task {
             defer { if loadToken == token { loadingTitle = nil } }
-            guard let p = try? await library.prepare(track), loadToken == token else { return }
+            // The queue can change while the track downloads: find the entry again.
+            guard let p = try? await library.prepare(track), loadToken == token,
+                  let index = queue.firstIndex(where: { $0.id == entryID }) else { return }
             queue[index].track = p.track
+            currentIndex = index
             do {
                 try player.load(p.url, gain: gain(p.track))
             } catch {
@@ -207,14 +211,14 @@ final class PlayerState: ObservableObject {
     func togglePlay() {
         if isPlaying {
             pause()
-        } else if player.hasTrack {
+        } else if player.hasTrack, player.position < player.duration - 0.05 {
             onWillPlay?()
             player.play()
             isPlaying = true
             changes.send()
             planNext()
-        } else if let i = currentIndex ?? order.first {
-            play(index: i)
+        } else if let i = player.hasTrack ? order.first : currentIndex ?? order.first {
+            play(index: i) // after the end of the queue, Play starts it again
         }
     }
 
@@ -227,6 +231,12 @@ final class PlayerState: ObservableObject {
     func stop() {
         player.stop()
         isPlaying = false
+        changes.send()
+    }
+
+    /// The output device changed (see AudioEngine.onRestart).
+    func engineRestarted() {
+        player.engineRestarted()
         changes.send()
     }
 

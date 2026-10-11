@@ -29,6 +29,7 @@ final class PlayerAppModel: ObservableObject {
         error = startError ?? store.error
         nowPlaying = NowPlaying(player: player, library: library)
         player.onError = { [weak self] in self?.error = $0 }
+        engine.onRestart = { [weak self] in self?.player.engineRestarted() }
         // Live sync with the DJ app: one store, two apps.
         player.prefs.exclusive = library.setting(StoreEvents.exclusiveKey) != "0"
         library.onStoreChanged = { [events] in events.post(.libraryChanged) }
@@ -70,6 +71,7 @@ final class PlayerAppModel: ObservableObject {
     func open(_ url: URL) {
         guard let link = PlayerLink.parse(url) else { return }
         let tracks = library.tracks(ids: link.ids)
+        guard !tracks.isEmpty else { return } // unknown ids must not clear the queue
         switch link.mode {
         case .play: player.playAll(tracks)
         case .next: player.enqueue(tracks, next: true)

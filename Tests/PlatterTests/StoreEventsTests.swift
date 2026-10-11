@@ -19,7 +19,9 @@ final class StoreEventsTests: XCTestCase {
 
     func testLibraryTellsTheOtherAppOnceAndNotBack() throws {
         let db = try LibraryDB(path: ":memory:")
-        let dir = FileManager.default.temporaryDirectory
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
         let library = Library(db: db, audioDirectory: dir)
         var posts = 0
         library.onStoreChanged = { posts += 1 }
@@ -34,11 +36,12 @@ final class StoreEventsTests: XCTestCase {
     }
 
     func testReceivesOtherSendersOnly() async throws {
-        let events = StoreEvents()
+        let channel = ".test-" + UUID().uuidString // the running apps do not hear it
+        let events = StoreEvents(channel: channel)
         var got = 0
         events.observe(.libraryChanged) { got += 1 }
         let center = DistributedNotificationCenter.default()
-        let name = Notification.Name(StoreEvents.Event.libraryChanged.rawValue)
+        let name = Notification.Name(StoreEvents.Event.libraryChanged.rawValue + channel)
         center.postNotificationName(name, object: "another-process", userInfo: nil, deliverImmediately: true)
         center.postNotificationName(name, object: String(ProcessInfo.processInfo.processIdentifier),
                                     userInfo: nil, deliverImmediately: true)

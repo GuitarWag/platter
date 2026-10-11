@@ -152,8 +152,12 @@ final class SkinLibrary: ObservableObject {
         var first: String?
         for url in panel.urls {
             let dest = Self.folder.appendingPathComponent(url.lastPathComponent)
-            try? FileManager.default.removeItem(at: dest)
-            if (try? FileManager.default.copyItem(at: url, to: dest)) != nil, first == nil { first = url.lastPathComponent }
+            // A file already in the skins folder is not copied (removing dest would delete it).
+            if url.standardizedFileURL != dest.standardizedFileURL {
+                try? FileManager.default.removeItem(at: dest)
+                guard (try? FileManager.default.copyItem(at: url, to: dest)) != nil else { continue }
+            }
+            if first == nil { first = url.lastPathComponent }
         }
         refresh()
         if let first { UserDefaults.standard.set("wsz:" + first, forKey: "player.skin") }
