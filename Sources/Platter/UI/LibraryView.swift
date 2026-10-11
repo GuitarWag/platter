@@ -334,6 +334,13 @@ struct LibraryBrowser: View {
         Button("Load on Deck A") { model.load(track, onto: .a) }
         Button("Load on Deck B") { model.load(track, onto: .b) }
         Divider()
+        Menu("Platter Player") {
+            Button("Play in Platter Player") { model.sendToPlayer([track], mode: .play) }
+            Button("Play Next") { model.sendToPlayer([track], mode: .next) }
+            Button("Add to Queue") { model.sendToPlayer([track], mode: .add) }
+            Divider()
+            Button("Play This List in Platter Player") { model.sendToPlayer(library.visibleTracks, mode: .play) }
+        }
         RatingMenu(rating: track.rating) { library.setRating(track, $0) }
         Divider()
         Button("Edit title and artist…") {

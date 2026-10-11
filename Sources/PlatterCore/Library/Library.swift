@@ -124,7 +124,19 @@ package final class Library: ObservableObject {
 
     // MARK: Reading
 
+    /// Tells the other app the store changed. Set by the app.
+    package var onStoreChanged: (() -> Void)?
+    private var reloadingFromStore = false
+
+    /// The other app changed the store: read it again, without telling it back.
+    package func reloadFromStore() {
+        reloadingFromStore = true
+        defer { reloadingFromStore = false }
+        reload()
+    }
+
     private func reload() {
+        if !reloadingFromStore { onStoreChanged?() }
         attempt {
             albums = try db.albums()
             smartAlbums = try db.smartAlbums()
@@ -392,6 +404,11 @@ package final class Library: ObservableObject {
 
     package func allTracks() -> [Track] { (try? db.allTracks()) ?? [] }
 
+    /// Tracks by id, in the order given; ids not in the library are skipped.
+    package func tracks(ids: [String]) -> [Track] {
+        ids.compactMap { try? db.track($0) ?? nil }
+    }
+
     /// Every track of an album, in album order.
     package func tracks(inAlbum id: Int64) -> [Track] { (try? db.tracks(album: id)) ?? [] }
 
@@ -410,6 +427,7 @@ package final class Library: ObservableObject {
     }
 
     private func historyChanged() {
+        if !reloadingFromStore { onStoreChanged?() }
         if source == .history { reloadTracks() }
     }
 

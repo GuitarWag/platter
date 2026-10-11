@@ -306,6 +306,9 @@ final class PlayerState: ObservableObject {
         engine.setPlayerBalance(prefs.balance)
         engine.setPlayerEQ(gains: prefs.eqGains, preamp: prefs.preamp, enabled: prefs.eqOn)
         guard let old else { return }
+        if old.exclusive != prefs.exclusive, persists {
+            library.setSetting(StoreEvents.exclusiveKey, prefs.exclusive ? "1" : "0")
+        }
         if old.shuffle != prefs.shuffle { reorder() }
         if old.shuffle != prefs.shuffle || old.repeatMode != prefs.repeatMode || old.leveling != prefs.leveling {
             planNext()

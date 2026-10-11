@@ -13,6 +13,7 @@ final class PlayerAppModel: ObservableObject {
     /// The player window, for the keyboard shortcuts.
     weak var playerWindow: NSWindow?
     @Published var error: String?
+    let events = StoreEvents()
     private var keyMonitor: Any?
 
     init() {
@@ -25,9 +26,32 @@ final class PlayerAppModel: ObservableObject {
         error = startError ?? store.error
         nowPlaying = NowPlaying(player: player, library: library)
         player.onError = { [weak self] in self?.error = $0 }
+        // Live sync with the DJ app: one store, two apps.
+        player.prefs.exclusive = library.setting(StoreEvents.exclusiveKey) != "0"
+        library.onStoreChanged = { [events] in events.post(.libraryChanged) }
+        events.observe(.libraryChanged) { [weak library] in library?.reloadFromStore() }
+        player.onWillPlay = { [weak self] in
+            guard let self, self.player.prefs.exclusive else { return }
+            self.events.post(.willPlay)
+        }
+        events.observe(.willPlay) { [weak self] in
+            guard let self, self.player.prefs.exclusive else { return }
+            self.player.pause()
+        }
         installKeyboardShortcuts()
         AppDelegate.model = self
         startBenchIfRequested()
+    }
+
+    /// A `platter-player://queue` link from the DJ app.
+    func open(_ url: URL) {
+        guard let link = PlayerLink.parse(url) else { return }
+        let tracks = library.tracks(ids: link.ids)
+        switch link.mode {
+        case .play: player.playAll(tracks)
+        case .next: player.enqueue(tracks, next: true)
+        case .add: player.enqueue(tracks)
+        }
     }
 
     /// Replace the queue with an album and play it.
@@ -92,6 +116,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static weak var model: PlayerAppModel?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Links from the DJ app ("Play in Platter Player").
+    @MainActor
+    func application(_ application: NSApplication, open urls: [URL]) {
+        urls.forEach { Self.model?.open($0) }
+    }
 
     @MainActor
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {

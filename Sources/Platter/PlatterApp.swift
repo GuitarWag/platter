@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
     let autoDJ: AutoDJ
 
     @Published var error: String?
+    let events = StoreEvents()
     private var subscriptions: Set<AnyCancellable> = []
     private var keyMonitor: Any?
 
@@ -40,7 +41,20 @@ final class AppModel: ObservableObject {
         self.autoDJ = AutoDJ(deckA: deckA, deckB: deckB, mixer: mixer, library: library)
         self.error = startError
 
+        // Live sync with Platter Player: one store, two apps.
+        library.onStoreChanged = { [events] in events.post(.libraryChanged) }
+        events.observe(.libraryChanged) { [weak library] in library?.reloadFromStore() }
+        events.observe(.willPlay) { [weak self] in
+            guard let self, self.exclusive else { return }
+            self.autoDJ.stop()
+            self.deckA.pause()
+            self.deckB.pause()
+        }
         for deck in [deckA, deckB] {
+            deck.onPlay = { [weak self] in
+                guard let self, self.exclusive else { return }
+                self.events.post(.willPlay)
+            }
             deck.onError = { [weak self] in self?.error = $0 }
             deck.onCueChanged = { [weak library] in library?.saveCue(trackID: $0, slot: $1, seconds: $2) }
             deck.onFirstPlay = { [weak library, weak deck] t in
@@ -66,6 +80,24 @@ final class AppModel: ObservableObject {
     }
 
     func deck(_ id: DeckID) -> DeckState { id == .a ? deckA : deckB }
+
+    /// Starting one app pauses the other (a setting shared through the store; on by default).
+    var exclusive: Bool { library.setting(StoreEvents.exclusiveKey) != "0" }
+
+    /// Hand tracks to Platter Player: play them now, next, or add them to its queue. Opens
+    /// the player when it is not running.
+    func sendToPlayer(_ tracks: [Track], mode: PlayerLink.Mode) {
+        guard !tracks.isEmpty, let url = PlayerLink.url(tracks.map(\.id), mode: mode) else { return }
+        let sibling = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Platter Player.app")
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: PlayerLink.bundleID)
+                ?? (FileManager.default.fileExists(atPath: sibling.path) ? sibling : nil) else {
+            error = "Platter Player is not installed. Build it with ./run.sh player."
+            return
+        }
+        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { _, err in
+            if let err { Task { @MainActor in self.error = "Could not open Platter Player: \(err.localizedDescription)" } }
+        }
+    }
 
     /// SYNC on `id`: match its tempo and beat phase to the other deck.
     func sync(_ id: DeckID) {

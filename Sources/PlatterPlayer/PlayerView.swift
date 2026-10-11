@@ -101,7 +101,7 @@ private struct MainPanel: View {
                     }
                     Divider()
                     Toggle("Level volume between tracks", isOn: $player.prefs.leveling)
-                    Toggle("Pause the DJ decks while playing", isOn: $player.prefs.exclusive)
+                    Toggle("Pause the other app when one starts", isOn: $player.prefs.exclusive)
                 } label: {
                     Text(player.prefs.crossfade == 0 ? "GAPLESS" : "XF \(Int(player.prefs.crossfade))s")
                         .font(LCD.mono(10, .bold))
