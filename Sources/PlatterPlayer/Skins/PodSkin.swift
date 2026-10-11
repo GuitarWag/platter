@@ -55,17 +55,19 @@ struct PodSkinView: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            // Clicks on the body fall through the artwork to the drag area and move the window.
+            WindowDragArea()
             // Body: brushed gradient, a specular highlight on the top half, a dark edge.
             PodShape()
                 .fill(LinearGradient(colors: palette.body, startPoint: .topLeading, endPoint: .bottomTrailing))
                 .overlay(PodShape().fill(LinearGradient(colors: [.white.opacity(0.45), .clear],
                                                         startPoint: .top, endPoint: .center)))
                 .overlay(PodShape().stroke(palette.edge, lineWidth: 2))
-                .background(WindowDragArea())
                 .shadow(color: .black.opacity(0.5), radius: 8, y: 5)
+                .allowsHitTesting(false)
 
             hub.position(x: 111, y: 125)
-            lcd.frame(width: 238, height: 118).position(x: 297, y: 120)
+            lcd.allowsHitTesting(false).frame(width: 238, height: 118).position(x: 297, y: 120)
             PodSeek(player: player, palette: palette).frame(width: 232, height: 18).position(x: 297, y: 198)
             PodKnob(value: $player.prefs.volume, palette: palette)
                 .frame(width: 46, height: 46).position(x: 405, y: 47)
