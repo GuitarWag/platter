@@ -11,14 +11,27 @@ let package = Package(
         .package(url: "https://github.com/tursodatabase/libsql-swift", exact: "0.3.2"),
     ],
     targets: [
+        // The shared engine, library, store, and analysis. Both apps use it.
+        .target(
+            name: "PlatterCore",
+            dependencies: [.product(name: "Libsql", package: "libsql-swift")],
+            path: "Sources/PlatterCore"
+        ),
+        // The DJ rig.
         .executableTarget(
             name: "Platter",
-            dependencies: [.product(name: "Libsql", package: "libsql-swift")],
+            dependencies: ["PlatterCore"],
             path: "Sources/Platter"
+        ),
+        // The music player.
+        .executableTarget(
+            name: "PlatterPlayer",
+            dependencies: ["PlatterCore"],
+            path: "Sources/PlatterPlayer"
         ),
         .testTarget(
             name: "PlatterTests",
-            dependencies: ["Platter"],
+            dependencies: ["PlatterCore", "Platter", "PlatterPlayer"],
             path: "Tests/PlatterTests"
         ),
     ]

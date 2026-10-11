@@ -3,8 +3,8 @@ import Combine
 import AVFoundation
 
 /// Files on disk: ~/Library/Application Support/Platter/{library.db, cache/<id>.m4a}.
-enum AppPaths {
-    static let support: URL = {
+package enum AppPaths {
+    package static let support: URL = {
         let fm = FileManager.default
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
@@ -13,23 +13,38 @@ enum AppPaths {
         return dir
     }()
 
-    static let audio: URL = {
+    package static let audio: URL = {
         let dir = support.appendingPathComponent("cache", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
 
-    static var database: URL { support.appendingPathComponent("library.db") }
-    static var legacyJSON: URL { support.appendingPathComponent("library.json") }
+    package static var database: URL { support.appendingPathComponent("library.db") }
+    package static var legacyJSON: URL { support.appendingPathComponent("library.json") }
+}
+
+/// Opens the shared store (the library database and the audio folder) for either app.
+@MainActor
+package enum LibraryStore {
+    /// The library, and a message when the database could not open (then nothing is saved
+    /// this session).
+    package static func open() -> (library: Library, error: String?) {
+        do {
+            return (Library(db: try LibraryDB(path: AppPaths.database.path)), nil)
+        } catch {
+            let message = "Could not open \(AppPaths.database.path): \(error). The library is not saved this session."
+            return (Library(db: try! LibraryDB(path: ":memory:")), message)
+        }
+    }
 }
 
 /// A track ready for a deck: its audio file on disk, with duration, BPM, and peaks filled in.
-struct PreparedTrack {
-    let url: URL
-    let track: Track
+package struct PreparedTrack {
+    package let url: URL
+    package let track: Track
     /// Saved main cue point and hot cues.
-    var cue: Double? = nil
-    var hotCues: [Double?] = Array(repeating: nil, count: 8)
+    package var cue: Double? = nil
+    package var hotCues: [Double?] = Array(repeating: nil, count: 8)
 }
 
 /// The music library: albums and tracks from the database, search, downloads, and analysis.
@@ -37,13 +52,13 @@ struct PreparedTrack {
 /// Main-actor only. Slow work (yt-dlp, analysis) runs off the main thread and comes back here
 /// to write the database, so the database has exactly one user.
 @MainActor
-final class Library: ObservableObject {
-    @Published private(set) var albums: [Album] = []
-    @Published private(set) var smartAlbums: [SmartAlbum] = []
-    @Published private(set) var tracks: [Track] = []          // of the selected source
-    @Published private(set) var searchResults: [Track] = []
+package final class Library: ObservableObject {
+    @Published package private(set) var albums: [Album] = []
+    @Published package private(set) var smartAlbums: [SmartAlbum] = []
+    @Published package private(set) var tracks: [Track] = []          // of the selected source
+    @Published package private(set) var searchResults: [Track] = []
     /// What the track list shows.
-    @Published var source: Source = .all {
+    @Published package var source: Source = .all {
         didSet {
             guard source != oldValue else { return }
             attempt { try db.setSetting("source", source.key) }
@@ -51,15 +66,15 @@ final class Library: ObservableObject {
         }
     }
     /// Quick filter over the visible rows.
-    @Published var filter = TrackFilter()
-    @Published var sort: TrackSort?
-    @Published var searchText = "" {
+    @Published package var filter = TrackFilter()
+    @Published package var sort: TrackSort?
+    @Published package var searchText = "" {
         didSet { runSearch() }
     }
     /// Track id -> what is happening to it now ("Downloading…", "Analyzing…").
-    @Published private(set) var activity: [String: String] = [:]
-    @Published private(set) var isResolving = false
-    @Published var error: String?
+    @Published package private(set) var activity: [String: String] = [:]
+    @Published package private(set) var isResolving = false
+    @Published package var error: String?
 
     private let db: LibraryDB
     /// In-flight downloads by track id. A second request for the same track waits on the
@@ -67,23 +82,23 @@ final class Library: ObservableObject {
     private var downloads: [String: Task<String, Error>] = [:]
 
     /// The selected album, when the source is an album.
-    var selectedAlbumID: Int64? {
+    package var selectedAlbumID: Int64? {
         get { if case .album(let id) = source { return id } else { return nil } }
         set { source = newValue.map(Source.album) ?? .all }
     }
-    var selectedAlbum: Album? { albums.first { $0.id == selectedAlbumID } }
-    var selectedSmartAlbum: SmartAlbum? {
+    package var selectedAlbum: Album? { albums.first { $0.id == selectedAlbumID } }
+    package var selectedSmartAlbum: SmartAlbum? {
         guard case .smart(let id) = source else { return nil }
         return smartAlbums.first { $0.id == id }
     }
-    var isSearching: Bool { !searchText.trimmed.isEmpty }
+    package var isSearching: Bool { !searchText.trimmed.isEmpty }
 
     /// Rows can be dragged into a new order only in an album shown as it is.
-    var canReorder: Bool { selectedAlbumID != nil && !isSearching && filter.isEmpty && sort == nil }
+    package var canReorder: Bool { selectedAlbumID != nil && !isSearching && filter.isEmpty && sort == nil }
 
     /// The rows the track list shows: search results or the source, then the quick filter,
     /// then the sort.
-    var visibleTracks: [Track] {
+    package var visibleTracks: [Track] {
         var rows = isSearching ? searchResults : tracks
         if !filter.isEmpty { rows = rows.filter(filter.matches) }
         if let sort { rows.sort(by: sort.areInOrder) }
@@ -91,10 +106,10 @@ final class Library: ObservableObject {
     }
 
     /// Where downloads and imported files live.
-    let audioDirectory: URL
+    package let audioDirectory: URL
 
     /// `audioDirectory` is for tests: they use a temp folder, never the user's library.
-    init(db: LibraryDB, audioDirectory: URL = AppPaths.audio) {
+    package init(db: LibraryDB, audioDirectory: URL = AppPaths.audio) {
         self.db = db
         self.audioDirectory = audioDirectory
         importLegacyLibraryIfNeeded()
@@ -156,7 +171,7 @@ final class Library: ObservableObject {
 
     /// Resolve a playlist URL and save it as an album, then select it. A URL that is already
     /// in the library selects that album.
-    func addPlaylist(url raw: String) async {
+    package func addPlaylist(url raw: String) async {
         let url = Self.normalize(raw)
         guard !url.isEmpty else { return }
         if let existing = try? db.albumID(sourceURL: url) {
@@ -182,7 +197,7 @@ final class Library: ObservableObject {
 
     /// Fetch the album's playlist again and append tracks that are new. Existing tracks,
     /// their order, and user edits stay as they are.
-    func refresh(_ album: Album) async {
+    package func refresh(_ album: Album) async {
         guard let url = album.sourceURL else { return }
         isResolving = true
         defer { isResolving = false }
@@ -195,7 +210,7 @@ final class Library: ObservableObject {
         }
     }
 
-    func createAlbum(named name: String) {
+    package func createAlbum(named name: String) {
         attempt {
             let id = try db.createAlbum(name: Self.cleanName(name, or: "New Album"), sourceURL: nil)
             reload()
@@ -203,18 +218,18 @@ final class Library: ObservableObject {
         }
     }
 
-    func rename(_ album: Album, to name: String) {
+    package func rename(_ album: Album, to name: String) {
         attempt { try db.renameAlbum(album.id, to: Self.cleanName(name, or: album.name)) }
         reload()
     }
 
     /// Delete the album. The tracks and their downloads stay in the library (search finds them).
-    func delete(_ album: Album) {
+    package func delete(_ album: Album) {
         attempt { try db.deleteAlbum(album.id) }
         reload()
     }
 
-    func moveAlbums(from source: IndexSet, to destination: Int) {
+    package func moveAlbums(from source: IndexSet, to destination: Int) {
         var ids = albums.map(\.id)
         ids.move(fromOffsets: source, toOffset: destination)
         attempt { try db.reorderAlbums(ids) }
@@ -223,7 +238,7 @@ final class Library: ObservableObject {
 
     // MARK: Tracks
 
-    func moveTracks(from source: IndexSet, to destination: Int) {
+    package func moveTracks(from source: IndexSet, to destination: Int) {
         guard let album = selectedAlbumID else { return }
         var ids = tracks.map(\.id)
         ids.move(fromOffsets: source, toOffset: destination)
@@ -231,24 +246,24 @@ final class Library: ObservableObject {
         reloadTracks()
     }
 
-    func add(_ track: Track, to album: Album) {
+    package func add(_ track: Track, to album: Album) {
         attempt { try db.addTracks([track], to: album.id) }
         reload()
     }
 
-    func remove(_ track: Track, from album: Album) {
+    package func remove(_ track: Track, from album: Album) {
         attempt { try db.removeTrack(track.id, from: album.id) }
         reload()
     }
 
-    func edit(_ track: Track, title: String, artist: String) {
+    package func edit(_ track: Track, title: String, artist: String) {
         attempt { try db.updateTrack(track.id, title: Self.cleanName(title, or: track.title), artist: artist.trimmed) }
         reload()
     }
 
     /// Delete the downloaded audio file. The track stays in its albums and downloads again
     /// when it is next loaded.
-    func deleteDownload(_ track: Track) {
+    package func deleteDownload(_ track: Track) {
         if let name = track.fileName {
             try? FileManager.default.removeItem(at: audioDirectory.appendingPathComponent(name))
         }
@@ -257,7 +272,7 @@ final class Library: ObservableObject {
     }
 
     /// Download every track of the album that is not downloaded yet, one at a time.
-    func downloadAll(_ album: Album) async {
+    package func downloadAll(_ album: Album) async {
         guard let list = try? db.tracks(album: album.id) else { return }
         for t in list where !t.isCached {
             _ = try? await audioFile(for: t)
@@ -268,7 +283,7 @@ final class Library: ObservableObject {
 
     /// Download (if needed) and analyze (if needed) a track for a deck. Errors are also shown
     /// in the panel.
-    func prepare(_ track: Track) async throws -> PreparedTrack {
+    package func prepare(_ track: Track) async throws -> PreparedTrack {
         do {
             let url = try await audioFile(for: track)
             var t = (try? db.track(track.id)) ?? track
@@ -304,7 +319,7 @@ final class Library: ObservableObject {
     }
 
     /// The downloaded audio file of a track, downloading it first when needed.
-    func audioFile(for track: Track) async throws -> URL {
+    package func audioFile(for track: Track) async throws -> URL {
         if let name = try? db.track(track.id)?.fileName {
             let url = audioDirectory.appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: url.path) { return url }
@@ -333,22 +348,22 @@ final class Library: ObservableObject {
 
     // MARK: Cues and history
 
-    func saveCue(trackID: String, slot: Int, seconds: Double?) {
+    package func saveCue(trackID: String, slot: Int, seconds: Double?) {
         attempt { try db.setCue(trackID, slot: slot, seconds: seconds) }
     }
 
-    func logPlay(_ track: Track, deck: DeckID) {
+    package func logPlay(_ track: Track, deck: DeckID) {
         attempt { try db.addHistory(track.id, deck: deck.label) }
         historyChanged()
     }
 
     /// A play in the music player.
-    func logPlayerPlay(_ track: Track) {
+    package func logPlayerPlay(_ track: Track) {
         attempt { try db.addHistory(track.id, deck: "Player", source: "player") }
         historyChanged()
     }
 
-    func setRating(_ track: Track, _ rating: Int) {
+    package func setRating(_ track: Track, _ rating: Int) {
         attempt { try db.setRating(track.id, rating) }
         reload()
     }
@@ -356,7 +371,7 @@ final class Library: ObservableObject {
     /// Resolve a YouTube or YouTube Music playlist into library tracks without making an
     /// album (for the player's queue). The tracks get library rows, so their downloads and
     /// analysis are kept.
-    func resolvePlaylistTracks(url raw: String) async -> [Track] {
+    package func resolvePlaylistTracks(url raw: String) async -> [Track] {
         let url = Self.normalize(raw)
         isResolving = true
         defer { isResolving = false }
@@ -375,22 +390,22 @@ final class Library: ObservableObject {
         }
     }
 
-    func allTracks() -> [Track] { (try? db.allTracks()) ?? [] }
+    package func allTracks() -> [Track] { (try? db.allTracks()) ?? [] }
 
     /// Every track of an album, in album order.
-    func tracks(inAlbum id: Int64) -> [Track] { (try? db.tracks(album: id)) ?? [] }
+    package func tracks(inAlbum id: Int64) -> [Track] { (try? db.tracks(album: id)) ?? [] }
 
     // MARK: Player storage
 
-    func playerQueue() -> [Track] { (try? db.playerQueue()) ?? [] }
+    package func playerQueue() -> [Track] { (try? db.playerQueue()) ?? [] }
 
-    func savePlayerQueue(_ ids: [String]) {
+    package func savePlayerQueue(_ ids: [String]) {
         attempt { try db.savePlayerQueue(ids) }
     }
 
-    func setting(_ key: String) -> String? { (try? db.setting(key)) ?? nil }
+    package func setting(_ key: String) -> String? { (try? db.setting(key)) ?? nil }
 
-    func setSetting(_ key: String, _ value: String?) {
+    package func setSetting(_ key: String, _ value: String?) {
         attempt { try db.setSetting(key, value) }
     }
 
@@ -398,7 +413,7 @@ final class Library: ObservableObject {
         if source == .history { reloadTracks() }
     }
 
-    func clearHistory() {
+    package func clearHistory() {
         attempt { try db.clearHistory() }
         historyChanged()
     }
@@ -406,7 +421,7 @@ final class Library: ObservableObject {
     // MARK: Smart albums
 
     /// Save the quick filter as a smart album and show it.
-    func saveFilterAsSmartAlbum(named name: String) {
+    package func saveFilterAsSmartAlbum(named name: String) {
         guard !filter.isEmpty else { return }
         attempt {
             let id = try db.createSmartAlbum(name: Self.cleanName(name, or: "Smart Album"), filter: filter)
@@ -416,27 +431,27 @@ final class Library: ObservableObject {
         }
     }
 
-    func rename(_ smart: SmartAlbum, to name: String) {
+    package func rename(_ smart: SmartAlbum, to name: String) {
         var s = smart
         s.name = Self.cleanName(name, or: smart.name)
         attempt { try db.updateSmartAlbum(s) }
         reload()
     }
 
-    func delete(_ smart: SmartAlbum) {
+    package func delete(_ smart: SmartAlbum) {
         attempt { try db.deleteSmartAlbum(smart.id) }
         reload()
     }
 
     // MARK: Local files
 
-    static let importableTypes = ["mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "caf", "alac"]
+    package static let importableTypes = ["mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "caf", "alac"]
 
     /// Copy audio files into the library. They go into the selected album when it is one you
     /// made, else into "Local Files". Title and artist come from the file's tags, or its name.
     /// Returns the imported tracks. `select` shows their album afterwards.
     @discardableResult
-    func importFiles(_ urls: [URL], select: Bool = true) async -> [Track] {
+    package func importFiles(_ urls: [URL], select: Bool = true) async -> [Track] {
         let files = urls.filter { Self.importableTypes.contains($0.pathExtension.lowercased()) }
         guard !files.isEmpty else {
             error = "No audio files to import. Supported: \(Self.importableTypes.joined(separator: ", "))."
@@ -480,7 +495,7 @@ final class Library: ObservableObject {
     }
 
     /// `source_url` of the "Local Files" album, so imports find it again.
-    static let localFilesKey = "local:files"
+    package static let localFilesKey = "local:files"
 
     private static func readTags(_ url: URL) async throws -> (title: String, artist: String, duration: Double?) {
         let asset = AVURLAsset(url: url)
@@ -521,7 +536,7 @@ final class Library: ObservableObject {
     // MARK: Helpers
 
     /// Strip query params (playnext, si, etc.) so the same playlist resolves to the same album.
-    nonisolated static func normalize(_ url: String) -> String {
+    package nonisolated static func normalize(_ url: String) -> String {
         var comps = URLComponents(string: url.trimmed)
         var items = comps?.queryItems ?? []
         items.removeAll { $0.name == "playnext" || $0.name == "si" }
@@ -531,7 +546,7 @@ final class Library: ObservableObject {
     }
 
     /// Name for a playlist whose JSON has no title.
-    nonisolated static func fallbackName(for url: String) -> String {
+    package nonisolated static func fallbackName(for url: String) -> String {
         let list = URLComponents(string: url)?.queryItems?.first { $0.name == "list" }?.value
         return list.map { "Playlist " + $0.suffix(6).uppercased() } ?? "Playlist"
     }
@@ -543,14 +558,14 @@ final class Library: ObservableObject {
 }
 
 /// Where the track list comes from.
-enum Source: Hashable {
+package enum Source: Hashable {
     case all
     case history
     case album(Int64)
     case smart(Int64)
 
     /// Stored in settings.
-    var key: String {
+    package var key: String {
         switch self {
         case .all: return "all"
         case .history: return "history"
@@ -559,7 +574,7 @@ enum Source: Hashable {
         }
     }
 
-    init?(key: String) {
+    package init?(key: String) {
         let parts = key.split(separator: ":")
         switch (parts.first, parts.count > 1 ? Int64(parts[1]) : nil) {
         case ("all", _): self = .all
@@ -572,14 +587,19 @@ enum Source: Hashable {
 }
 
 /// A sort of the track list by one column.
-struct TrackSort: Equatable {
-    enum Column: String, CaseIterable {
+package struct TrackSort: Equatable {
+    package enum Column: String, CaseIterable {
         case title, artist, bpm, key, duration, rating
     }
-    var column: Column
-    var ascending = true
+    package var column: Column
+    package var ascending = true
 
-    func areInOrder(_ a: Track, _ b: Track) -> Bool {
+    package init(column: Column, ascending: Bool = true) {
+        self.column = column
+        self.ascending = ascending
+    }
+
+    package func areInOrder(_ a: Track, _ b: Track) -> Bool {
         let result: Bool
         switch column {
         case .title: result = a.title.localizedStandardCompare(b.title) == .orderedAscending

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Outcome of a playlist resolve.
-enum PlaylistResult {
+package enum PlaylistResult {
     case playlist(title: String?, tracks: [Track])
     case failure(String)
 }
@@ -9,24 +9,24 @@ enum PlaylistResult {
 /// Thin wrapper around the `yt-dlp` command-line tool. Two operations are used:
 ///   1. Resolve a playlist to flat metadata (title/artist/duration) as JSON.
 ///   2. Download a single track's audio as m4a.
-enum YTDLP {
+package enum YTDLP {
     /// Homebrew bin folders. An app started from Finder or `open` gets a PATH without them, and
     /// then yt-dlp cannot find ffmpeg for the m4a step.
     private static let toolDirs = ["/opt/homebrew/bin", "/usr/local/bin"]
 
     /// The yt-dlp binary: `$YTDLP_PATH`, else the first Homebrew install found.
-    static var binary: String {
+    package static var binary: String {
         if let p = ProcessInfo.processInfo.environment["YTDLP_PATH"] { return p }
         return toolDirs.map { $0 + "/yt-dlp" }.first(where: FileManager.default.isExecutableFile(atPath:))
             ?? "/opt/homebrew/bin/yt-dlp"
     }
 
-    static func isInstalled() -> Bool {
+    package static func isInstalled() -> Bool {
         FileManager.default.isExecutableFile(atPath: binary)
     }
 
     /// Append a timestamped record of every yt-dlp invocation to ~/Library/Logs/Platter/yt-dlp.log.
-    static func log(_ line: String) {
+    package static func log(_ line: String) {
         let fm = FileManager.default
         let dir = fm.urls(for: .libraryDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Logs/Platter", isDirectory: true)
@@ -52,7 +52,7 @@ enum YTDLP {
     /// other deadlocks as soon as output exceeds the ~64 KB OS pipe buffer (a 111-track playlist
     /// dump is ~250 KB): yt-dlp blocks on a full pipe, and waitUntilExit blocks on yt-dlp.
     /// A watchdog also kills the process after `timeout` so a hung yt-dlp cannot freeze the UI.
-    static func run(_ arguments: [String], workingDirectory: URL? = nil, timeout: TimeInterval = 300) -> (stdout: String, stderr: String, exit: Int32) {
+    package static func run(_ arguments: [String], workingDirectory: URL? = nil, timeout: TimeInterval = 300) -> (stdout: String, stderr: String, exit: Int32) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: binary)
         p.arguments = arguments
@@ -110,7 +110,7 @@ enum YTDLP {
     }
 
     /// `run` on a GCD thread, so a blocked yt-dlp never holds a Swift concurrency thread.
-    static func runAsync(_ arguments: [String], timeout: TimeInterval = 300) async -> (stdout: String, stderr: String, exit: Int32) {
+    package static func runAsync(_ arguments: [String], timeout: TimeInterval = 300) async -> (stdout: String, stderr: String, exit: Int32) {
         await withCheckedContinuation { c in
             DispatchQueue.global(qos: .userInitiated).async {
                 c.resume(returning: run(arguments, timeout: timeout))
@@ -119,7 +119,7 @@ enum YTDLP {
     }
 
     /// Resolve a playlist URL to its title and flat track metadata.
-    static func playlist(url: String) async -> PlaylistResult {
+    package static func playlist(url: String) async -> PlaylistResult {
         let r = await runAsync(["--flat-playlist", "--dump-single-json", "--no-warnings", url], timeout: 120)
         guard r.exit == 0 else {
             return .failure(r.stderr.isEmpty ? "yt-dlp exited \(r.exit)" : r.stderr.trimmed)
@@ -134,7 +134,7 @@ enum YTDLP {
     /// Download one video's audio as `<id>.m4a` into `directory`. The download runs in a
     /// private temp folder and moves in only when complete, so a failed or killed run never
     /// leaves a partial file where the library looks for audio. Returns the file name.
-    static func download(id: String, into directory: URL) async throws -> String {
+    package static func download(id: String, into directory: URL) async throws -> String {
         let fm = FileManager.default
         let tmp = directory.appendingPathComponent(".tmp-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -164,7 +164,7 @@ enum YTDLP {
 
     /// Parse the flat-playlist JSON. `--flat-playlist --dump-single-json` emits one object with
     /// an `entries` array. Also accepts a bare array or newline-delimited objects.
-    static func parseFlatJSON(_ text: String) -> [Track] {
+    package static func parseFlatJSON(_ text: String) -> [Track] {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
 
@@ -193,7 +193,7 @@ enum YTDLP {
     }
 
     /// The playlist title from the top-level object, or `nil` for the other shapes.
-    static func parsePlaylistTitle(_ text: String) -> String? {
+    package static func parsePlaylistTitle(_ text: String) -> String? {
         let data = Data(text.utf8)
         guard let pl = try? JSONDecoder().decode(PlaylistObject.self, from: data),
               let title = pl.title?.trimmed, !title.isEmpty else { return nil }
@@ -208,19 +208,19 @@ enum YTDLP {
 
 /// Top-level playlist object emitted by `--dump-single-json` (has an "entries" array).
 private struct PlaylistObject: Decodable {
-    let title: String?
-    let entries: [FlatEntry]?
+    package let title: String?
+    package let entries: [FlatEntry]?
 }
 
 /// Minimal flat-playlist entry shape. yt-dlp names the artist differently per extractor:
 /// `channel`, `uploader`, or `creator`. We take the first one present.
 private struct FlatEntry: Decodable {
-    let id: String
-    let title: String?
-    let artist: String?
-    let duration: Double?
+    package let id: String
+    package let title: String?
+    package let artist: String?
+    package let duration: Double?
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         title = try c.decodeIfPresent(String.self, forKey: .title)
@@ -232,11 +232,11 @@ private struct FlatEntry: Decodable {
         duration = try c.decodeIfPresent(Double.self, forKey: .duration)
     }
 
-    enum CodingKeys: String, CodingKey {
+    package enum CodingKeys: String, CodingKey {
         case id, title, channel, uploader, creator, duration
     }
 }
 
 extension String {
-    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
+    package var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }

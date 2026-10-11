@@ -1,5 +1,7 @@
 import XCTest
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 final class YTDLPParserTests: XCTestCase {
     // Shape yt-dlp actually emits for `--flat-playlist --dump-json`: one object, "entries" array.

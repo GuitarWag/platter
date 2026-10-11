@@ -1,4 +1,5 @@
 import SwiftUI
+import PlatterCore
 
 /// The center mixer, laid out like a two-channel club mixer: per channel HI/MID/LOW, a
 /// filter, an effect, headphone cue, and a long fader with an LED meter; then the master

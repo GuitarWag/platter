@@ -1,45 +1,6 @@
 import Foundation
 import Combine
-
-/// Which physical deck a control belongs to.
-enum DeckID: Int, CaseIterable, Identifiable {
-    case a = 0
-    case b = 1
-    var id: Int { rawValue }
-    var label: String { self == .a ? "A" : "B" }
-}
-
-/// How the pitch fader affects the audio. Cycles like the PITCH button on a DJ player.
-enum PitchMode: Int, CaseIterable, Identifiable {
-    /// Tempo and pitch both follow the fader (turntable feel).
-    case varispeed = 0
-    /// Tempo follows the fader, pitch is held (key stays).
-    case keyLock = 1
-    /// Tempo is held, pitch follows the fader (BPM is unchanged).
-    case bpmShift = 2
-
-    var id: Int { rawValue }
-    var label: String {
-        switch self {
-        case .varispeed: return "VARISPEED"
-        case .keyLock: return "KEY LOCK"
-        case .bpmShift: return "BPM SHIFT"
-        }
-    }
-
-    var shortLabel: String {
-        switch self {
-        case .varispeed: return "VAR"
-        case .keyLock: return "KEY"
-        case .bpmShift: return "BPM"
-        }
-    }
-
-    var next: PitchMode {
-        let all = PitchMode.allCases
-        return all[(rawValue + 1) % all.count]
-    }
-}
+import PlatterCore
 
 /// Per-deck state the UI shows. Transport truth lives in the `DeckPlayer` (which owns the
 /// playhead clock); the published flags here drive the buttons and the waveform TimelineView.

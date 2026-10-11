@@ -4,11 +4,11 @@ import Accelerate
 import os
 
 /// Peak level of one channel. The audio tap thread writes it, the UI reads it.
-final class LevelMeter: @unchecked Sendable {
+package final class LevelMeter: @unchecked Sendable {
     private let state = OSAllocatedUnfairLock(initialState: Float(0))
 
     /// Linear peak, 0...1+, with a short fall-off so the meter does not flicker.
-    var level: Float { state.withLock { $0 } }
+    package var level: Float { state.withLock { $0 } }
 
     fileprivate func push(_ peak: Float) {
         state.withLock { $0 = max(peak, $0 * 0.8) }
@@ -36,7 +36,7 @@ final class LevelMeter: @unchecked Sendable {
 ///
 /// Node connections use a nil format; the player node converts each file's sample rate.
 @MainActor
-final class AudioEngine {
+package final class AudioEngine {
     private let engine = AVAudioEngine()
     private var decks: [DeckID: DeckNodes] = [:]
     private var scratchVoices: [DeckID: ScratchVoice] = [:]
@@ -45,11 +45,11 @@ final class AudioEngine {
     private var crossfaderGains: (a: Double, b: Double) = Crossfader.gains(crossfader: 0.5)
     private var configObserver: NSObjectProtocol?
     /// Channel meters, measured after the EQ and before the fader (like a DJ mixer).
-    let meters: [DeckID: LevelMeter] = [.a: LevelMeter(), .b: LevelMeter()]
+    package let meters: [DeckID: LevelMeter] = [.a: LevelMeter(), .b: LevelMeter()]
     /// Master meter, before the limiter, so it shows when the mix runs hot.
-    let masterMeter = LevelMeter()
+    package let masterMeter = LevelMeter()
     /// Headphone output for PFL.
-    let cue = CueOutput()
+    package let cue = CueOutput()
     private let limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
         componentType: kAudioUnitType_Effect, componentSubType: kAudioUnitSubType_PeakLimiter,
         componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
@@ -62,35 +62,36 @@ final class AudioEngine {
     private let playerEQ = AVAudioUnitEQ(numberOfBands: PlayerEQ.frequencies.count)
     private let playerMix = AVAudioMixerNode()
     /// The player's audio after its EQ, for the visualizer.
-    let playerViz = VizBuffer()
+    package let playerViz = VizBuffer()
     /// When the current recording started, and where it goes.
-    private(set) var recording: (started: Date, url: URL)?
+    package private(set) var recording: (started: Date, url: URL)?
 
     /// Called after the engine restarts for a new output device. Players are stopped by then.
-    var onRestart: (() -> Void)?
+    package var onRestart: (() -> Void)?
 
     private struct DeckNodes {
-        let player = AVAudioPlayerNode()
-        let varispeed = AVAudioUnitVarispeed()
-        let timePitch = AVAudioUnitTimePitch()
+        package let player = AVAudioPlayerNode()
+        package let varispeed = AVAudioUnitVarispeed()
+        package let timePitch = AVAudioUnitTimePitch()
         /// Sums the player with the scratch voice.
-        let deckMix = AVAudioMixerNode()
-        let low = AVAudioUnitEQ(numberOfBands: 1)
-        let mid = AVAudioUnitEQ(numberOfBands: 1)
-        let high = AVAudioUnitEQ(numberOfBands: 1)
-        let filter = AVAudioUnitEQ(numberOfBands: 1)
-        let echo = AVAudioUnitDelay()
-        let reverb = AVAudioUnitReverb()
-        let channel = AVAudioMixerNode()
+        package let deckMix = AVAudioMixerNode()
+        package let low = AVAudioUnitEQ(numberOfBands: 1)
+        package let mid = AVAudioUnitEQ(numberOfBands: 1)
+        package let high = AVAudioUnitEQ(numberOfBands: 1)
+        package let filter = AVAudioUnitEQ(numberOfBands: 1)
+        package let echo = AVAudioUnitDelay()
+        package let reverb = AVAudioUnitReverb()
+        package let channel = AVAudioMixerNode()
     }
 
-    /// `offline`: render without an audio device (manual rendering, pulled by
-    /// `renderOffline`), for tests that measure the output. Nothing is played.
-    init(offline: AVAudioFormat? = nil) {
+    /// `decks` builds the two DJ deck chains, `player` the music player's chain: each app
+    /// builds only what it uses. `offline`: render without an audio device (manual
+    /// rendering, pulled by `renderOffline`), for tests that measure the output.
+    package init(decks buildDecks: Bool = true, player buildPlayer: Bool = true, offline: AVAudioFormat? = nil) {
         if let offline {
             try? engine.enableManualRenderingMode(.offline, format: offline, maximumFrameCount: 4096)
         }
-        for deck in DeckID.allCases {
+        for deck in buildDecks ? DeckID.allCases : [] {
             let d = DeckNodes()
             configureEQ(d.low, type: .lowShelf, freq: 120)
             configureEQ(d.mid, type: .parametric, freq: 1_000)
@@ -123,24 +124,7 @@ final class AudioEngine {
             Self.installMeter(on: d.high, meter: meters[deck]!, cue: cue.feeds[deck]!)
             decks[deck] = d
         }
-        for node in playerNodes {
-            engine.attach(node)
-        }
-        [playerPre, playerEQ, playerMix].forEach(engine.attach)
-        for (bus, node) in playerNodes.enumerated() {
-            engine.connect(node, to: playerPre, fromBus: 0, toBus: bus, format: nil)
-        }
-        engine.connect(playerPre, to: playerEQ, format: nil)
-        engine.connect(playerEQ, to: playerMix, format: nil)
-        engine.connect(playerMix, to: engine.mainMixerNode, format: nil)
-        Self.installViz(on: playerEQ, viz: playerViz)
-        for (band, freq) in zip(playerEQ.bands, PlayerEQ.frequencies) {
-            band.filterType = .parametric
-            band.frequency = freq
-            band.bandwidth = 1
-            band.gain = 0
-            band.bypass = true
-        }
+        if buildPlayer { buildPlayerChain() }
 
         // main -> limiter -> output, at the output's format.
         let outFormat = engine.outputNode.inputFormat(forBus: 0)
@@ -184,7 +168,7 @@ final class AudioEngine {
     }
 
     /// Sample rate of the player's visualizer feed.
-    var playerVizRate: Double { playerEQ.outputFormat(forBus: 0).sampleRate }
+    package var playerVizRate: Double { playerEQ.outputFormat(forBus: 0).sampleRate }
 
     nonisolated private static func installRecorder(on node: AVAudioNode, recorder: Recorder) {
         node.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
@@ -201,8 +185,27 @@ final class AudioEngine {
         b.bypass = false
     }
 
+    private func buildPlayerChain() {
+        playerNodes.forEach(engine.attach)
+        [playerPre, playerEQ, playerMix].forEach(engine.attach)
+        for (bus, node) in playerNodes.enumerated() {
+            engine.connect(node, to: playerPre, fromBus: 0, toBus: bus, format: nil)
+        }
+        engine.connect(playerPre, to: playerEQ, format: nil)
+        engine.connect(playerEQ, to: playerMix, format: nil)
+        engine.connect(playerMix, to: engine.mainMixerNode, format: nil)
+        Self.installViz(on: playerEQ, viz: playerViz)
+        for (band, freq) in zip(playerEQ.bands, PlayerEQ.frequencies) {
+            band.filterType = .parametric
+            band.frequency = freq
+            band.bandwidth = 1
+            band.gain = 0
+            band.bypass = true
+        }
+    }
+
     /// Render `seconds` of the master output (offline engines only).
-    func renderOffline(seconds: Double) throws -> AVAudioPCMBuffer {
+    package func renderOffline(seconds: Double) throws -> AVAudioPCMBuffer {
         let format = engine.manualRenderingFormat
         let total = AVAudioFrameCount(seconds * format.sampleRate)
         guard engine.isInManualRenderingMode,
@@ -221,16 +224,16 @@ final class AudioEngine {
         return out
     }
 
-    func start() throws {
+    package func start() throws {
         guard !engine.isRunning else { return }
         engine.prepare()
         try engine.start()
     }
 
-    var isRunning: Bool { engine.isRunning }
+    package var isRunning: Bool { engine.isRunning }
 
     /// A `DeckPlayer` bound to this deck's nodes.
-    func deckPlayer(for deck: DeckID) -> DeckPlayer {
+    package func deckPlayer(for deck: DeckID) -> DeckPlayer {
         let d = decks[deck]!
         return DeckPlayer(engine: self, player: d.player, varispeed: d.varispeed, timePitch: d.timePitch,
                           scratch: scratchVoices[deck]!, vinyl: vinylNoises[deck]!)
@@ -239,12 +242,12 @@ final class AudioEngine {
     // MARK: Mixer
 
     /// `value` 0 (A in) ... 1 (B in), equal-power.
-    func setCrossfader(_ value: Double) {
+    package func setCrossfader(_ value: Double) {
         crossfaderGains = Crossfader.gains(crossfader: value)
         applyChannelVolumes()
     }
 
-    func setChannelLevel(_ level: Double, deck: DeckID) {
+    package func setChannelLevel(_ level: Double, deck: DeckID) {
         levels[deck] = min(1, max(0, level))
         applyChannelVolumes()
     }
@@ -254,7 +257,7 @@ final class AudioEngine {
         decks[.b]?.channel.volume = Float((levels[.b] ?? 1) * crossfaderGains.b)
     }
 
-    func setEQ(low: Double, mid: Double, high: Double, deck: DeckID) {
+    package func setEQ(low: Double, mid: Double, high: Double, deck: DeckID) {
         guard let d = decks[deck],
               let lb = d.low.bands.first, let mb = d.mid.bands.first, let hb = d.high.bands.first
         else { return }
@@ -267,7 +270,7 @@ final class AudioEngine {
 
     /// One-knob filter: below 0 a low-pass sweeping 20 kHz -> 200 Hz, above 0 a high-pass
     /// sweeping 20 Hz -> 8 kHz, off near the center.
-    func setFilter(_ value: Double, deck: DeckID) {
+    package func setFilter(_ value: Double, deck: DeckID) {
         guard let band = decks[deck]?.filter.bands.first else { return }
         let v = min(1, max(-1, value))
         if abs(v) < 0.02 {
@@ -281,7 +284,7 @@ final class AudioEngine {
 
     /// The channel effect and its amount (0 ... 1). Echo repeats every `echoSeconds`
     /// (half a beat when the deck has a BPM).
-    func setFX(_ fx: ChannelFX, amount: Double, echoSeconds: Double, deck: DeckID) {
+    package func setFX(_ fx: ChannelFX, amount: Double, echoSeconds: Double, deck: DeckID) {
         guard let d = decks[deck] else { return }
         let a = Float(min(1, max(0, amount)))
         d.echo.bypass = fx != .echo || a == 0
@@ -296,18 +299,18 @@ final class AudioEngine {
 
     /// The music player, bound to the player chain. `clock` is the pre-mix node, which
     /// renders all the time, so its render time is the player's clock.
-    func queuePlayer() -> QueuePlayer {
+    package func queuePlayer() -> QueuePlayer {
         QueuePlayer(engine: self, nodes: playerNodes, clock: playerPre)
     }
 
-    func setPlayerVolume(_ v: Double) { playerMix.outputVolume = Float(min(1, max(0, v))) }
+    package func setPlayerVolume(_ v: Double) { playerMix.outputVolume = Float(min(1, max(0, v))) }
 
     /// -1 (left) ... 1 (right).
-    func setPlayerBalance(_ b: Double) { playerMix.pan = Float(min(1, max(-1, b))) }
+    package func setPlayerBalance(_ b: Double) { playerMix.pan = Float(min(1, max(-1, b))) }
 
     /// Graphic EQ gains in dB (one per `PlayerEQ.frequencies`) and the preamp. A band at 0 dB,
     /// or the whole EQ when off, is bypassed and costs nothing.
-    func setPlayerEQ(gains: [Double], preamp: Double, enabled: Bool) {
+    package func setPlayerEQ(gains: [Double], preamp: Double, enabled: Bool) {
         for (band, g) in zip(playerEQ.bands, gains) {
             band.gain = Float(min(12, max(-12, g)))
             band.bypass = !enabled || g == 0
@@ -315,14 +318,14 @@ final class AudioEngine {
         playerEQ.globalGain = enabled ? Float(min(12, max(-12, preamp))) : 0
     }
 
-    func setMasterLevel(_ level: Double) {
+    package func setMasterLevel(_ level: Double) {
         engine.mainMixerNode.outputVolume = Float(min(1, max(0, level)))
     }
 
     // MARK: Recording
 
     /// Start recording the master output to an AAC file in ~/Music/Platter.
-    func startRecording() throws -> URL {
+    package func startRecording() throws -> URL {
         stopRecording()
         let dir = FileManager.default.urls(for: .musicDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Platter", isDirectory: true)
@@ -345,7 +348,7 @@ final class AudioEngine {
 
     /// Stop recording. Returns the file.
     @discardableResult
-    func stopRecording() -> URL? {
+    package func stopRecording() -> URL? {
         guard let r = recording else { return nil }
         limiter.removeTap(onBus: 0)
         recorder.close()
@@ -356,12 +359,12 @@ final class AudioEngine {
     // MARK: Headphones
 
     /// Turn PFL on or off for a deck.
-    func setPFL(_ on: Bool, deck: DeckID) {
+    package func setPFL(_ on: Bool, deck: DeckID) {
         cue.feeds[deck]?.enabled = on
     }
 
     /// Send the headphone feed to `device`, or stop it with `nil`.
-    func setHeadphones(_ device: AudioDeviceID?) throws {
+    package func setHeadphones(_ device: AudioDeviceID?) throws {
         guard let device else { cue.stop(); return }
         try cue.start(device: device, sampleRate: decks[.a]!.high.outputFormat(forBus: 0).sampleRate)
     }

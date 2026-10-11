@@ -2,12 +2,12 @@ import Foundation
 import AVFoundation
 
 /// The music player's 10-band graphic EQ: the classic desktop-player bands.
-enum PlayerEQ {
-    static let frequencies: [Float] = [60, 170, 310, 600, 1_000, 3_000, 6_000, 12_000, 14_000, 16_000]
-    static let labels = ["60", "170", "310", "600", "1K", "3K", "6K", "12K", "14K", "16K"]
+package enum PlayerEQ {
+    package static let frequencies: [Float] = [60, 170, 310, 600, 1_000, 3_000, 6_000, 12_000, 14_000, 16_000]
+    package static let labels = ["60", "170", "310", "600", "1K", "3K", "6K", "12K", "14K", "16K"]
 
     /// Built-in presets: gains in dB per band.
-    static let presets: [(name: String, gains: [Double])] = [
+    package static let presets: [(name: String, gains: [Double])] = [
         ("Flat", [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
         ("Rock", [5, 3, -2, -4, -1, 2, 5, 6, 6, 6]),
         ("Pop", [-1, 2, 4, 5, 3, 0, -1, -1, -1, -1]),
@@ -26,19 +26,19 @@ enum PlayerEQ {
 /// The playhead also comes from the engine clock: the current track's start frame plus the
 /// samples rendered since its planned start.
 @MainActor
-final class QueuePlayer {
+package final class QueuePlayer {
     private let engine: AudioEngine // the engine does not hold this player
     private let nodes: [AVAudioPlayerNode]
     private let clock: AVAudioNode
 
     private struct Voice {
-        var file: AVAudioFile?
-        var url: URL?
+        package var file: AVAudioFile?
+        package var url: URL?
         /// File frame where playback of this track starts.
-        var startFrame: AVAudioFramePosition = 0
+        package var startFrame: AVAudioFramePosition = 0
         /// Engine sample time at which it starts.
-        var startTime: AVAudioFramePosition = 0
-        var gain: Float = 1
+        package var startTime: AVAudioFramePosition = 0
+        package var gain: Float = 1
     }
 
     private var voices = [Voice(), Voice()]
@@ -49,17 +49,17 @@ final class QueuePlayer {
     private var nextScheduled = false
     private var monitor: Task<Void, Never>?
 
-    private(set) var isPlaying = false
+    package private(set) var isPlaying = false
     /// Crossfade length in seconds; 0 = gapless.
-    var crossfade: Double = 0 {
+    package var crossfade: Double = 0 {
         didSet { if isPlaying { replanNext() } }
     }
     /// The next track took over (gapless or after a crossfade began).
-    var onAdvance: (() -> Void)?
+    package var onAdvance: (() -> Void)?
     /// The current track ended with no next track.
-    var onEnd: (() -> Void)?
+    package var onEnd: (() -> Void)?
 
-    init(engine: AudioEngine, nodes: [AVAudioPlayerNode], clock: AVAudioNode) {
+    package init(engine: AudioEngine, nodes: [AVAudioPlayerNode], clock: AVAudioNode) {
         self.engine = engine
         self.nodes = nodes
         self.clock = clock
@@ -67,15 +67,15 @@ final class QueuePlayer {
 
     // MARK: Reading
 
-    var hasTrack: Bool { voices[current].file != nil }
-    var url: URL? { voices[current].url }
+    package var hasTrack: Bool { voices[current].file != nil }
+    package var url: URL? { voices[current].url }
 
-    var duration: Double {
+    package var duration: Double {
         guard let f = voices[current].file else { return 0 }
         return Double(f.length) / f.processingFormat.sampleRate
     }
 
-    var position: Double {
+    package var position: Double {
         let v = voices[current]
         guard let f = v.file else { return 0 }
         let sr = f.processingFormat.sampleRate
@@ -98,14 +98,14 @@ final class QueuePlayer {
     // MARK: Transport
 
     /// Load a track and stop at its start. `gain` is the leveling gain (linear).
-    func load(_ url: URL, gain: Float = 1) throws {
+    package func load(_ url: URL, gain: Float = 1) throws {
         stopAll()
         let f = try AVAudioFile(forReading: url)
         voices[current] = Voice(file: f, url: url, startFrame: 0, startTime: 0, gain: gain)
         next = nil
     }
 
-    func play() {
+    package func play() {
         guard hasTrack, !isPlaying else { return }
         if !engine.isRunning { try? engine.start() }
         guard let now = now() else { return }
@@ -116,19 +116,19 @@ final class QueuePlayer {
         startMonitor()
     }
 
-    func pause() {
+    package func pause() {
         guard isPlaying else { return }
         let pos = position
         stopAll()
         voices[current].startFrame = frame(pos)
     }
 
-    func stop() {
+    package func stop() {
         stopAll()
         voices[current].startFrame = 0
     }
 
-    func seek(to seconds: Double) {
+    package func seek(to seconds: Double) {
         guard hasTrack else { return }
         let wasPlaying = isPlaying
         stopAll()
@@ -137,7 +137,7 @@ final class QueuePlayer {
     }
 
     /// The track to play after the current one. Planned on the other node right away.
-    func setNext(_ url: URL?, gain: Float = 1) {
+    package func setNext(_ url: URL?, gain: Float = 1) {
         next = url.map { ($0, gain) }
         replanNext()
     }

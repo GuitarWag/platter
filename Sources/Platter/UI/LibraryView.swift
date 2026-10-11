@@ -1,4 +1,5 @@
 import SwiftUI
+import PlatterCore
 
 /// The library browser under the decks: a toolbar (search, Auto DJ, add playlist), the album
 /// list, the track table, and the Auto DJ queue while it runs.
@@ -333,13 +334,6 @@ struct LibraryBrowser: View {
         Button("Load on Deck A") { model.load(track, onto: .a) }
         Button("Load on Deck B") { model.load(track, onto: .b) }
         Divider()
-        Menu("Music Player") {
-            Button("Play in Player") { model.player.playAll([track]) }
-            Button("Play Next") { model.player.enqueue([track], next: true) }
-            Button("Add to Queue") { model.player.enqueue([track]) }
-            Divider()
-            Button("Play This List in Player") { model.player.playAll(library.visibleTracks) }
-        }
         RatingMenu(rating: track.rating) { library.setRating(track, $0) }
         Divider()
         Button("Edit title and artist…") {

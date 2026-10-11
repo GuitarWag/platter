@@ -8,33 +8,33 @@ import os
 ///
 /// The main thread sets the target position; the render thread moves toward it a block at a
 /// time, with smoothing so a 60 Hz hand update does not sound stepped.
-final class ScratchVoice: @unchecked Sendable {
+package final class ScratchVoice: @unchecked Sendable {
     private struct State {
-        var left: [Float] = []
-        var right: [Float] = []
+        package var left: [Float] = []
+        package var right: [Float] = []
         /// File frame of `left[0]`.
-        var start: Double = 0
-        var active = false
+        package var start: Double = 0
+        package var active = false
         /// Where the hand is (file frames) and where the audio is.
-        var target: Double = 0
-        var smoothed: Double = 0
-        var current: Double = 0
+        package var target: Double = 0
+        package var smoothed: Double = 0
+        package var current: Double = 0
         /// 0 ... 1 fade, so grabbing and letting go do not click.
-        var gain: Float = 0
+        package var gain: Float = 0
         /// Follows the record speed: a cartridge outputs nothing when the record stands
         /// still, so a still hand is silent (not a DC offset).
-        var motion: Float = 0
+        package var motion: Float = 0
     }
 
     private let state = OSAllocatedUnfairLock(uncheckedState: State())
-    let format: AVAudioFormat
+    package let format: AVAudioFormat
 
-    init(sampleRate: Double) {
+    package init(sampleRate: Double) {
         format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
     }
 
     /// Start at file frame `frame`, with an empty window until `load` arrives.
-    func begin(at frame: Double) {
+    package func begin(at frame: Double) {
         state.withLockUnchecked {
             $0.active = true
             $0.target = frame
@@ -45,7 +45,7 @@ final class ScratchVoice: @unchecked Sendable {
         }
     }
 
-    func load(left: [Float], right: [Float], start: Double) {
+    package func load(left: [Float], right: [Float], start: Double) {
         state.withLockUnchecked {
             $0.left = left
             $0.right = right
@@ -53,16 +53,16 @@ final class ScratchVoice: @unchecked Sendable {
         }
     }
 
-    func move(to frame: Double) {
+    package func move(to frame: Double) {
         state.withLockUnchecked { $0.target = frame }
     }
 
-    func end() {
+    package func end() {
         state.withLockUnchecked { $0.active = false }
     }
 
     /// Render thread.
-    func render(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames n: Int) {
+    package func render(_ l: UnsafeMutablePointer<Float>, _ r: UnsafeMutablePointer<Float>, frames n: Int) {
         state.withLockUnchecked { s in
             guard s.active || s.gain > 1e-4 else {
                 l.update(repeating: 0, count: n)
@@ -97,7 +97,7 @@ final class ScratchVoice: @unchecked Sendable {
 
     /// The source node that plays this voice. Built outside the main actor: the block runs
     /// on the audio thread.
-    nonisolated func makeNode() -> AVAudioSourceNode {
+    package nonisolated func makeNode() -> AVAudioSourceNode {
         AVAudioSourceNode(format: format) { [self] _, _, frameCount, bufferList in
             let abl = UnsafeMutableAudioBufferListPointer(bufferList)
             guard abl.count >= 2,
@@ -109,7 +109,7 @@ final class ScratchVoice: @unchecked Sendable {
     }
 
     /// Decode `seconds` around `frame` of the file at `url`, as float stereo at `sampleRate`.
-    static func decodeWindow(url: URL, around frame: Double, seconds: Double)
+    package static func decodeWindow(url: URL, around frame: Double, seconds: Double)
         throws -> (left: [Float], right: [Float], start: Double) {
         let file = try AVAudioFile(forReading: url)
         let sr = file.processingFormat.sampleRate

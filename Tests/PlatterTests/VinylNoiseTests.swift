@@ -1,5 +1,7 @@
 import XCTest
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 final class VinylNoiseTests: XCTestCase {
     private let sr = 48_000.0

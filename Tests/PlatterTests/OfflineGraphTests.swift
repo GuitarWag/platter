@@ -1,6 +1,8 @@
 import XCTest
 import AVFoundation
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 /// The real audio graph, rendered offline (no device, no sound): pitch modes, filter,
 /// effects, limiter, crossfader, loops, and scratch, measured on generated signals.

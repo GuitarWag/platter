@@ -5,26 +5,26 @@ import Foundation
 import Accelerate
 
 /// A constant-tempo beat grid: beat `n` is at `firstBeat + n * 60 / bpm` seconds.
-struct BeatGrid: Equatable {
-    let bpm: Double
+package struct BeatGrid: Equatable {
+    package let bpm: Double
     /// Time of a beat near the start, in `0 ..< 60 / bpm`.
-    let firstBeat: Double
+    package let firstBeat: Double
 
-    var period: Double { 60 / bpm }
+    package var period: Double { 60 / bpm }
 
     /// The beat time nearest to `t`.
-    func nearestBeat(to t: Double) -> Double {
+    package func nearestBeat(to t: Double) -> Double {
         firstBeat + ((t - firstBeat) / period).rounded() * period
     }
 
     /// Where `t` sits inside its beat, `0 ..< 1`.
-    func phase(at t: Double) -> Double {
+    package func phase(at t: Double) -> Double {
         let p = ((t - firstBeat) / period).truncatingRemainder(dividingBy: 1)
         return p < 0 ? p + 1 : p
     }
 
     /// Beat times in `range`.
-    func beats(in range: ClosedRange<Double>) -> [Double] {
+    package func beats(in range: ClosedRange<Double>) -> [Double] {
         let first = ((range.lowerBound - firstBeat) / period).rounded(.up)
         var out: [Double] = []
         var n = first
@@ -41,7 +41,7 @@ struct BeatGrid: Equatable {
     /// for the kick) at ~200 frames/s; tempo from its autocorrelation, weighted toward
     /// 120 BPM against octave errors and folded into 78...175; phase from the offset whose
     /// comb of beats collects the most onset strength. `nil` for silence or no pulse.
-    static func analyze(mono: [Float], sampleRate: Double) -> BeatGrid? {
+    package static func analyze(mono: [Float], sampleRate: Double) -> BeatGrid? {
         let hop = max(1, Int(sampleRate / 200))
         let frameRate = sampleRate / Double(hop)
         let frames = mono.count / hop
@@ -160,28 +160,28 @@ struct BeatGrid: Equatable {
 }
 
 /// A musical key: tonic pitch class (0 = C) and mode.
-struct MusicalKey: Equatable {
-    let tonic: Int
-    let minor: Bool
+package struct MusicalKey: Equatable {
+    package let tonic: Int
+    package let minor: Bool
 
     private static let names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
     /// "Am", "F#".
-    var name: String { Self.names[tonic] + (minor ? "m" : "") }
+    package var name: String { Self.names[tonic] + (minor ? "m" : "") }
 
     /// Camelot wheel code for harmonic mixing: "8A" = A minor, "8B" = C major. Neighbours
     /// (±1, or the same number with the other letter) mix in key.
-    var camelot: String {
+    package var camelot: String {
         let major = minor ? (tonic + 3) % 12 : tonic
         return "\((major * 7 % 12 + 7) % 12 + 1)\(minor ? "A" : "B")"
     }
 
-    init(tonic: Int, minor: Bool) {
+    package init(tonic: Int, minor: Bool) {
         self.tonic = ((tonic % 12) + 12) % 12
         self.minor = minor
     }
 
-    init?(name: String) {
+    package init?(name: String) {
         let minor = name.hasSuffix("m")
         let root = minor ? String(name.dropLast()) : name
         guard let i = Self.names.firstIndex(of: root) else { return nil }
@@ -190,7 +190,7 @@ struct MusicalKey: Equatable {
 
     /// True when the two keys mix well on the Camelot wheel: same code, same number with
     /// the other letter, or ±1 with the same letter.
-    func isCompatible(with other: MusicalKey) -> Bool {
+    package func isCompatible(with other: MusicalKey) -> Bool {
         let a = camelot, b = other.camelot
         let na = Int(a.dropLast())!, nb = Int(b.dropLast())!
         if a.last == b.last { return na == nb || (na % 12) + 1 == nb || (nb % 12) + 1 == na }
@@ -203,7 +203,7 @@ struct MusicalKey: Equatable {
 
     /// Estimate the key: a chroma vector from FFT frames (55 Hz - 2 kHz, each frame
     /// normalized so loud parts do not dominate), correlated with the 24 rotated profiles.
-    static func detect(mono: [Float], sampleRate: Double) -> MusicalKey? {
+    package static func detect(mono: [Float], sampleRate: Double) -> MusicalKey? {
         // Decimate to ~12 kHz with a box average (enough for the pitch range used).
         let d = max(1, Int(sampleRate / 12_000))
         let sr = sampleRate / Double(d)

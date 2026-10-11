@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
+import PlatterCore
 
 private enum LCD {
     static let green = Color(red: 0.35, green: 1.0, blue: 0.45)
@@ -16,14 +17,14 @@ private enum LCD {
 /// like a classic desktop player. Each can be shown or hidden; "shade" folds the window into
 /// one bar.
 struct PlayerWindowView: View {
-    let model: AppModel
+    let model: PlayerAppModel
     @ObservedObject private var player: PlayerState
     @AppStorage("player.showEQ") private var showEQ = true
     @AppStorage("player.showPlaylist") private var showPlaylist = true
     @AppStorage("player.shade") private var shade = false
     @AppStorage("player.showLibrary") private var showLibrary = false
 
-    init(model: AppModel) {
+    init(model: PlayerAppModel) {
         self.model = model
         player = model.player
     }
@@ -46,21 +47,6 @@ struct PlayerWindowView: View {
         .background(Color(white: 0.1))
         .background(WindowAccessor { model.playerWindow = $0 })
         .preferredColorScheme(.dark)
-    }
-}
-
-/// Hands the hosting `NSWindow` to a closure.
-struct WindowAccessor: NSViewRepresentable {
-    let onWindow: (NSWindow?) -> Void
-
-    func makeNSView(context: Context) -> NSView {
-        let v = NSView()
-        DispatchQueue.main.async { onWindow(v.window) }
-        return v
-    }
-
-    func updateNSView(_ v: NSView, context: Context) {
-        DispatchQueue.main.async { onWindow(v.window) }
     }
 }
 
@@ -528,7 +514,7 @@ private struct EQResponse: View {
 // MARK: Playlist
 
 private struct PlaylistPanel: View {
-    let model: AppModel
+    let model: PlayerAppModel
     @ObservedObject var player: PlayerState
     @ObservedObject private var library: Library
     @State private var search = ""
@@ -536,7 +522,7 @@ private struct PlaylistPanel: View {
     @State private var askingURL = false
     @State private var urlDraft = ""
 
-    init(model: AppModel, player: PlayerState) {
+    init(model: PlayerAppModel, player: PlayerState) {
         self.model = model
         self.player = player
         library = model.library
@@ -674,12 +660,12 @@ private struct PlaylistRow: View {
 
 /// The menu bar mini player: the track, its art, and the transport.
 struct MiniPlayerView: View {
-    let model: AppModel
+    let model: PlayerAppModel
     @ObservedObject private var player: PlayerState
     @Environment(\.openWindow) private var openWindow
     @State private var art: NSImage?
 
-    init(model: AppModel) {
+    init(model: PlayerAppModel) {
         self.model = model
         player = model.player
     }
@@ -728,12 +714,12 @@ struct MiniPlayerView: View {
 
 /// Albums (with cover art) and artists, to play or queue.
 private struct LibraryPanel: View {
-    let model: AppModel
+    let model: PlayerAppModel
     @ObservedObject private var library: Library
     @AppStorage("player.libraryTab") private var tab = 0
     @State private var tracks: [Track] = []
 
-    init(model: AppModel) {
+    init(model: PlayerAppModel) {
         self.model = model
         library = model.library
     }
@@ -787,7 +773,7 @@ private struct LibraryPanel: View {
 }
 
 private struct AlbumTile: View {
-    let model: AppModel
+    let model: PlayerAppModel
     let album: Album
     let tracks: [Track]
     @State private var art: NSImage?
@@ -831,17 +817,3 @@ struct QueueMenu: View {
     }
 }
 
-/// Set a rating: none to five stars.
-struct RatingMenu: View {
-    let rating: Int
-    let set: (Int) -> Void
-
-    var body: some View {
-        Menu("Rating") {
-            ForEach(0...5, id: \.self) { n in
-                Button(n == 0 ? "None" : String(repeating: "★", count: n)) { set(n) }
-                    .disabled(n == rating)
-            }
-        }
-    }
-}

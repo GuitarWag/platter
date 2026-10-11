@@ -4,7 +4,7 @@ import AVFoundation
 /// Cover art for a track: the art embedded in an imported file, or the YouTube thumbnail.
 /// Cached on disk in Application Support/Platter/artwork, and in memory.
 @MainActor
-enum Artwork {
+package enum Artwork {
     private static var memory: [String: NSImage] = [:]
     private static var directory: URL {
         let d = AppPaths.support.appendingPathComponent("artwork", isDirectory: true)
@@ -12,7 +12,7 @@ enum Artwork {
         return d
     }
 
-    static func image(for track: Track, audioDirectory: URL) async -> NSImage? {
+    package static func image(for track: Track, audioDirectory: URL) async -> NSImage? {
         if let m = memory[track.id] { return m }
         let file = directory.appendingPathComponent("\(track.id).jpg")
         if let data = try? Data(contentsOf: file), let img = NSImage(data: data) {

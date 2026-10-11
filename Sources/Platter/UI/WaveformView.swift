@@ -1,4 +1,5 @@
 import SwiftUI
+import PlatterCore
 
 /// The whole track at a glance: played part dimmed, hot cues and the cue point marked.
 /// Click or drag to seek.

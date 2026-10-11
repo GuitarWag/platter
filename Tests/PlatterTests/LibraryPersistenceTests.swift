@@ -1,6 +1,8 @@
 import XCTest
 import Foundation
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 final class LibraryPersistenceTests: XCTestCase {
     func testNormalizeStripsTrackingParams() {

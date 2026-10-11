@@ -5,22 +5,22 @@ import os
 
 /// The newest audio of the player, for the visualizer. The tap thread writes; the UI reads a
 /// snapshot (it does not consume).
-final class VizBuffer: @unchecked Sendable {
-    static let size = 4096
+package final class VizBuffer: @unchecked Sendable {
+    package static let size = 4096
     private struct Ring {
-        var data = [Float](repeating: 0, count: VizBuffer.size)
-        var write = 0
-        var enabled = false
+        package var data = [Float](repeating: 0, count: VizBuffer.size)
+        package var write = 0
+        package var enabled = false
     }
     private let ring = OSAllocatedUnfairLock(uncheckedState: Ring())
 
-    var enabled: Bool {
+    package var enabled: Bool {
         get { ring.withLockUnchecked { $0.enabled } }
         set { ring.withLockUnchecked { $0.enabled = newValue } }
     }
 
     /// Tap thread: mono mix of the buffer.
-    func push(_ buffer: AVAudioPCMBuffer) {
+    package func push(_ buffer: AVAudioPCMBuffer) {
         guard let d = buffer.floatChannelData else { return }
         let n = Int(buffer.frameLength), ch = Int(buffer.format.channelCount)
         ring.withLockUnchecked { r in
@@ -35,7 +35,7 @@ final class VizBuffer: @unchecked Sendable {
     }
 
     /// The last `count` samples, oldest first.
-    func snapshot(_ count: Int) -> [Float] {
+    package func snapshot(_ count: Int) -> [Float] {
         ring.withLockUnchecked { r in
             let n = min(count, Self.size)
             return (0..<n).map { r.data[(r.write - n + $0 + Self.size) % Self.size] }
@@ -44,8 +44,8 @@ final class VizBuffer: @unchecked Sendable {
 }
 
 /// Spectrum bars from audio samples. Pure, so it unit-tests.
-enum Spectrum {
-    static let fftSize = 2048
+package enum Spectrum {
+    package static let fftSize = 2048
     private static let log2n = vDSP_Length(11)
     /// Made once: the visualizer calls `bars` 60 times a second. The setup is read-only, so
     /// it is safe to share.
@@ -57,12 +57,12 @@ enum Spectrum {
     }()
 
     /// Band edges (Hz) of `bands` log-spaced bars from `low` to `high`.
-    static func edges(bands: Int, low: Double = 40, high: Double = 16_000) -> [Double] {
+    package static func edges(bands: Int, low: Double = 40, high: Double = 16_000) -> [Double] {
         (0...bands).map { low * pow(high / low, Double($0) / Double(bands)) }
     }
 
     /// Bar heights 0 ... 1 (−60 ... 0 dBFS) for the last `fftSize` samples.
-    static func bars(_ samples: [Float], sampleRate: Double, bands: Int = 20) -> [Float] {
+    package static func bars(_ samples: [Float], sampleRate: Double, bands: Int = 20) -> [Float] {
         let n = fftSize
         guard samples.count >= n else { return [Float](repeating: 0, count: bands) }
         var x = [Float](repeating: 0, count: n)

@@ -1,5 +1,7 @@
 import XCTest
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 final class PeakTableTests: XCTestCase {
     func testNormalizesToPeakOne() {

@@ -1,6 +1,8 @@
 import XCTest
 import AVFoundation
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 final class SpectrumTests: XCTestCase {
     private func tone(_ hz: Double, amp: Float = 0.5, sr: Double = 44_100) -> [Float] {

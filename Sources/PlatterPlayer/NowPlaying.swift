@@ -1,6 +1,7 @@
 import AppKit
 import MediaPlayer
 import Combine
+import PlatterCore
 
 /// Connects the music player to macOS: Now Playing (Control Center and the menu bar) and
 /// the media keys, AirPods, and other remote commands.
@@ -18,7 +19,7 @@ final class NowPlaying {
         self.player = player
         self.library = library
         let center = MPRemoteCommandCenter.shared()
-        let bind: (MPRemoteCommand, Command) -> Void = { cmd, c in
+        let bind: (MPRemoteCommand, Command) -> Void = { [weak self] cmd, c in
             cmd.addTarget { [weak self] _ in self?.handle(c) == true ? .success : .commandFailed }
         }
         bind(center.playCommand, .play)

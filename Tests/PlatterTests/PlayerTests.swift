@@ -1,7 +1,9 @@
 import XCTest
 import AVFoundation
 import MediaPlayer
+@testable import PlatterCore
 @testable import Platter
+@testable import PlatterPlayer
 
 final class QueueOrderTests: XCTestCase {
     func testOrderAndShuffle() {
