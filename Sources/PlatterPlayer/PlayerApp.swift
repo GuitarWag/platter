@@ -16,11 +16,14 @@ final class PlayerAppModel: ObservableObject {
     let events = StoreEvents()
     private var keyMonitor: Any?
 
-    init() {
-        engine = AudioEngine(decks: false) // the DJ decks are the other app
+    /// Tests pass their own library and an offline engine; the app opens the shared store.
+    init(library testLibrary: Library? = nil, engine testEngine: AudioEngine? = nil) {
+        engine = testEngine ?? AudioEngine(decks: false) // the DJ decks are the other app
         var startError: String?
-        do { try engine.start() } catch { startError = "Audio engine failed to start: \(error.localizedDescription)" }
-        let store = LibraryStore.open()
+        if testEngine == nil {
+            do { try engine.start() } catch { startError = "Audio engine failed to start: \(error.localizedDescription)" }
+        }
+        let store = testLibrary.map { (library: $0, error: nil as String?) } ?? LibraryStore.open()
         library = store.library
         player = PlayerState(engine: engine, library: library)
         error = startError ?? store.error
@@ -168,6 +171,7 @@ final class DockAction: NSMenuItem {
 @main
 struct PlatterPlayerApp: App {
     @StateObject private var model = PlayerAppModel()
+    @StateObject private var skins = SkinLibrary()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
@@ -183,6 +187,7 @@ struct PlatterPlayerApp: App {
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
+        .commands { SkinCommands(library: skins) }
 
         MenuBarExtra {
             MiniPlayerView(model: model)

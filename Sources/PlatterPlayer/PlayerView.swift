@@ -13,10 +13,10 @@ private enum LCD {
     }
 }
 
-/// The music player window: a main panel, an EQ panel, and a playlist, stacked and docked
-/// like a classic desktop player. Each can be shown or hidden; "shade" folds the window into
-/// one bar.
-struct PlayerWindowView: View {
+/// The "Platter" skin: a main panel, an EQ panel, a library, and a playlist, stacked and
+/// docked like a classic desktop player. Each can be shown or hidden; "shade" folds the
+/// window into one bar.
+struct PlatterSkinView: View {
     let model: PlayerAppModel
     @ObservedObject private var player: PlayerState
     @AppStorage("player.showEQ") private var showEQ = true
@@ -45,8 +45,6 @@ struct PlayerWindowView: View {
         .frame(minHeight: shade ? 34 : nil, maxHeight: (showPlaylist || showLibrary) && !shade ? .infinity : nil)
         .fixedSize(horizontal: false, vertical: !(showPlaylist || showLibrary) || shade)
         .background(Color(white: 0.1))
-        .background(WindowAccessor { model.playerWindow = $0 })
-        .preferredColorScheme(.dark)
     }
 }
 
@@ -256,14 +254,17 @@ private struct FormatLine: View {
     }
 }
 
-private struct Marquee: View {
+struct Marquee: View {
     let text: String
+    var color: Color = LCD.green
+    var size: CGFloat = 12
 
     var body: some View {
         GeometryReader { geo in
             TimelineView(.animation(minimumInterval: 1.0 / 20)) { ctx in
-                Canvas { g, size in
-                    let resolved = g.resolve(Text(text).font(LCD.mono(12)).foregroundColor(LCD.green))
+                Canvas { g, canvasSize in
+                    let size = canvasSize
+                    let resolved = g.resolve(Text(text).font(LCD.mono(self.size)).foregroundColor(color))
                     let w = resolved.measure(in: CGSize(width: 10_000, height: size.height)).width
                     if w <= size.width - 8 {
                         g.draw(resolved, at: CGPoint(x: 6, y: size.height / 2), anchor: .leading)
