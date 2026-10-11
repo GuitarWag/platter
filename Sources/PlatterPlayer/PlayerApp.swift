@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import PlatterCore
 
 /// The music player app: the shared engine (player chain only), the shared library and
@@ -15,6 +16,7 @@ final class PlayerAppModel: ObservableObject {
     @Published var error: String?
     let events = StoreEvents()
     private var keyMonitor: Any?
+    private var libraryErrors: AnyCancellable?
 
     /// Tests pass their own library and an offline engine; the app opens the shared store.
     init(library testLibrary: Library? = nil, engine testEngine: AudioEngine? = nil) {
@@ -29,6 +31,8 @@ final class PlayerAppModel: ObservableObject {
         error = startError ?? store.error
         nowPlaying = NowPlaying(player: player, library: library)
         player.onError = { [weak self] in self?.error = $0 }
+        // Library errors (a playlist that does not resolve, a failed write) show here too.
+        libraryErrors = library.$error.compactMap { $0 }.sink { [weak self] in self?.error = $0 }
         engine.onRestart = { [weak self] in self?.player.engineRestarted() }
         // Live sync with the DJ app: one store, two apps.
         player.prefs.exclusive = library.setting(StoreEvents.exclusiveKey) != "0"

@@ -564,7 +564,7 @@ private struct PlaylistPanel: View {
                 guard !files.isEmpty || !web.isEmpty else { return false }
                 Task {
                     if !files.isEmpty { player.enqueue(await library.importFiles(files, select: false)) }
-                    for u in web { player.enqueue(await library.resolvePlaylistTracks(url: u.absoluteString)) }
+                    for u in web { await addPlaylist(u.absoluteString) }
                 }
                 return true
             }
@@ -598,11 +598,11 @@ private struct PlaylistPanel: View {
             TextField("https://music.youtube.com/playlist?list=…", text: $urlDraft)
             Button("Add") {
                 let u = urlDraft
-                Task { player.enqueue(await library.resolvePlaylistTracks(url: u)) }
+                Task { await addPlaylist(u) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Its tracks go straight into the queue, without making an album.")
+            Text("It becomes an album in the library (in Platter too), and its tracks go into the queue.")
         }
     }
 
@@ -620,6 +620,11 @@ private struct PlaylistPanel: View {
     private func removeSelected() {
         player.remove(at: IndexSet(player.queue.indices.filter { selection.contains(player.queue[$0].id) }))
         selection = []
+    }
+
+    /// Save a YouTube playlist as an album, the same as in Platter, and queue its tracks.
+    private func addPlaylist(_ url: String) async {
+        if let id = await library.addPlaylist(url: url) { addAlbum(id) }
     }
 
     private func addAlbum(_ id: Int64) {

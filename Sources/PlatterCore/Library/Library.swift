@@ -183,28 +183,33 @@ package final class Library: ObservableObject {
     // MARK: Albums
 
     /// Resolve a playlist URL and save it as an album, then select it. A URL that is already
-    /// in the library selects that album.
-    package func addPlaylist(url raw: String) async {
+    /// in the library selects that album. Returns the album, or nil when it failed.
+    @discardableResult
+    package func addPlaylist(url raw: String) async -> Int64? {
         let url = Self.normalize(raw)
-        guard !url.isEmpty else { return }
+        guard !url.isEmpty else { return nil }
         if let existing = try? db.albumID(sourceURL: url) {
             selectedAlbumID = existing
             searchText = ""
-            return
+            return existing
         }
         isResolving = true
         defer { isResolving = false }
         switch await YTDLP.playlist(url: url) {
         case .playlist(let title, let found):
+            var added: Int64?
             attempt {
                 let id = try db.createAlbum(name: title ?? Self.fallbackName(for: url), sourceURL: url)
                 try db.addTracks(found, to: id)
                 searchText = ""
                 reload()
                 selectedAlbumID = id
+                added = id
             }
+            return added
         case .failure(let reason):
             error = "Could not resolve the playlist: \(reason)"
+            return nil
         }
     }
 
@@ -379,28 +384,6 @@ package final class Library: ObservableObject {
     package func setRating(_ track: Track, _ rating: Int) {
         attempt { try db.setRating(track.id, rating) }
         reload()
-    }
-
-    /// Resolve a YouTube or YouTube Music playlist into library tracks without making an
-    /// album (for the player's queue). The tracks get library rows, so their downloads and
-    /// analysis are kept.
-    package func resolvePlaylistTracks(url raw: String) async -> [Track] {
-        let url = Self.normalize(raw)
-        isResolving = true
-        defer { isResolving = false }
-        switch await YTDLP.playlist(url: url) {
-        case .playlist(_, let found):
-            var out: [Track] = []
-            attempt {
-                try db.upsertTracks(found)
-                out = try found.compactMap { try db.track($0.id) }
-            }
-            reload()
-            return out
-        case .failure(let reason):
-            error = "Could not resolve the playlist: \(reason)"
-            return []
-        }
     }
 
     package func allTracks() -> [Track] { (try? db.allTracks()) ?? [] }
