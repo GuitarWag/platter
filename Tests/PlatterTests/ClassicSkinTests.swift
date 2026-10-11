@@ -97,6 +97,14 @@ final class ClassicSkinTests: XCTestCase {
         let model = PlayerAppModel(library: library, engine: engine)
         model.player.persists = false
         model.player.recordsHistory = false
+        // With the EQ and playlist windows docked, a queue, and an EQ curve.
+        model.player.enqueue([Track(id: "t1", title: "Café del Mar", artist: "Energy 52", duration: 400),
+                              Track(id: "t2", title: "Strobe", artist: "deadmau5", duration: 600)])
+        model.player.prefs.eqGains = [6, 4, 2, 0, -2, -4, -2, 0, 3, 6]
+        UserDefaults.standard.set(true, forKey: "classic.eq")
+        UserDefaults.standard.set(true, forKey: "classic.pl")
+        defer { ["classic.eq", "classic.pl"].forEach(UserDefaults.standard.removeObject(forKey:)) }
+
         // PLATTER_TEST_WSZ: also render a real skin, for a look.
         let env = ProcessInfo.processInfo.environment
         let real = try env["PLATTER_TEST_WSZ"].map { try ClassicSkin(url: URL(fileURLWithPath: $0)) }
@@ -104,6 +112,7 @@ final class ClassicSkinTests: XCTestCase {
             guard let s else { continue }
             let image = try XCTUnwrap(ImageRenderer(content: ClassicMainWindow(model: model, skin: s)).cgImage)
             XCTAssertEqual(image.width, 550)
+            XCTAssertEqual(image.height, 2 * (116 + 116 + 174), "main, EQ, and playlist")
             if let out = env["PLATTER_RENDER_DIR"],
                let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
                 try png.write(to: URL(fileURLWithPath: out).appendingPathComponent("\(name).png"))

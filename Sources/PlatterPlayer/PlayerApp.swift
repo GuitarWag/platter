@@ -10,8 +10,8 @@ final class PlayerAppModel: ObservableObject {
     let library: Library
     let player: PlayerState
     private(set) var nowPlaying: NowPlaying!
-    /// The player window, for the keyboard shortcuts.
-    weak var playerWindow: NSWindow?
+    /// The player window. AppKit owns it (see PlayerWindow); nil until first shown.
+    private(set) var playerWindow: PlayerWindow?
     @Published var error: String?
     let events = StoreEvents()
     private var keyMonitor: Any?
@@ -42,8 +42,28 @@ final class PlayerAppModel: ObservableObject {
             self.player.pause()
         }
         installKeyboardShortcuts()
-        AppDelegate.model = self
         startBenchIfRequested()
+    }
+
+    func showPlayerWindow() {
+        if playerWindow == nil {
+            let w = PlayerWindow(model: self)
+            w.apply(shaped: Skin(key: UserDefaults.standard.string(forKey: "player.skin") ?? "").isShaped)
+            playerWindow = w
+        }
+        playerWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    /// Open the DJ app: installed, or next to this app.
+    func openDJ() {
+        let sibling = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("Platter.app")
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "local.platter")
+                ?? (FileManager.default.fileExists(atPath: sibling.path) ? sibling : nil) else {
+            error = "Platter is not installed. Build it with ./run.sh."
+            return
+        }
+        NSWorkspace.shared.openApplication(at: app, configuration: NSWorkspace.OpenConfiguration())
     }
 
     /// A `platter-player://queue` link from the DJ app.
@@ -114,21 +134,28 @@ final class PlayerAppModel: ObservableObject {
     }
 }
 
-/// The Dock menu, and playing on after the last window closes.
+/// Owns the model and the player window, the Dock menu, and playing on after the last
+/// window closes.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    @MainActor static weak var model: PlayerAppModel?
+    let model = PlayerAppModel()
+
+    func applicationDidFinishLaunching(_ notification: Notification) { model.showPlayerWindow() }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    /// Links from the DJ app ("Play in Platter Player").
-    @MainActor
-    func application(_ application: NSApplication, open urls: [URL]) {
-        urls.forEach { Self.model?.open($0) }
+    /// A Dock click with no window open shows the player.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { model.showPlayerWindow() }
+        return false
     }
 
-    @MainActor
+    /// Links from the DJ app ("Play in Platter Player").
+    func application(_ application: NSApplication, open urls: [URL]) {
+        urls.forEach { model.open($0) }
+    }
+
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
-        guard let model = Self.model else { return nil }
         let p = model.player
         let menu = NSMenu()
         if let t = p.current {
@@ -146,7 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             header.isEnabled = false
             menu.addItem(header)
             for a in albums {
-                menu.addItem(DockAction(a.name) { model.playAlbum(a.id) })
+                menu.addItem(DockAction(a.name) { [model] in model.playAlbum(a.id) })
             }
         }
         return menu
@@ -168,32 +195,33 @@ final class DockAction: NSMenuItem {
     @MainActor @objc private func fire() { run() }
 }
 
+/// The player window is AppKit (PlayerWindow, opened by AppDelegate); the scenes here are
+/// the menu bar player and the menus.
 @main
 struct PlatterPlayerApp: App {
-    @StateObject private var model = PlayerAppModel()
     @StateObject private var skins = SkinLibrary()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Window("Platter Player", id: "player") {
-            PlayerWindowView(model: model)
-                .overlay(alignment: .top) {
-                    if let e = model.error {
-                        Text(e).font(.system(size: 11)).foregroundColor(.white).padding(6)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(0.85)))
-                            .onTapGesture { model.error = nil }
-                    }
-                }
-        }
-        .windowResizability(.contentSize)
-        .windowStyle(.hiddenTitleBar)
-        .commands { SkinCommands(library: skins) }
-
         MenuBarExtra {
-            MiniPlayerView(model: model)
+            MiniPlayerView(model: delegate.model)
         } label: {
-            Image(systemName: model.player.isPlaying ? "music.note" : "music.note.list")
+            MenuBarIcon(player: delegate.model.player)
         }
         .menuBarExtraStyle(.window)
+        .commands {
+            SkinCommands(library: skins)
+            CommandGroup(before: .windowList) {
+                Button("Player") { delegate.model.showPlayerWindow() }.keyboardShortcut("1")
+                Button("Close Window") { NSApp.keyWindow?.close() }.keyboardShortcut("w")
+                Divider()
+            }
+        }
     }
+}
+
+private struct MenuBarIcon: View {
+    @ObservedObject var player: PlayerState
+
+    var body: some View { Image(systemName: player.isPlaying ? "music.note" : "music.note.list") }
 }

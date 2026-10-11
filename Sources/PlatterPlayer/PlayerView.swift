@@ -663,7 +663,6 @@ private struct PlaylistRow: View {
 struct MiniPlayerView: View {
     let model: PlayerAppModel
     @ObservedObject private var player: PlayerState
-    @Environment(\.openWindow) private var openWindow
     @State private var art: NSImage?
 
     init(model: PlayerAppModel) {
@@ -696,9 +695,9 @@ struct MiniPlayerView: View {
             .buttonStyle(.borderless)
             Divider()
             HStack {
-                Button("Open Player") { openWindow(id: "player"); NSApp.activate() }
+                Button("Open Player") { model.showPlayerWindow() }
                 Spacer()
-                Button("Open DJ") { openWindow(id: "dj"); NSApp.activate() }
+                Button("Open DJ") { model.openDJ() }
             }
             .controlSize(.small)
         }

@@ -14,6 +14,8 @@ final class ClassicSkin {
     private var crops: [String: Image] = [:]
     let visColors: [Color]
     let region: [[CGPoint]]
+    /// pledit.txt: Normal, Current, NormalBG, SelectedBG (lower-cased keys).
+    let playlistStyle: [String: String]
 
     init(url: URL) throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("platter-skin-" + UUID().uuidString)
@@ -48,6 +50,14 @@ final class ClassicSkin {
             Color(red: Double($0[0]) / 255, green: Double($0[1]) / 255, blue: Double($0[2]) / 255)
         }
         region = Self.parseRegion(texts["region.txt"] ?? "")
+        playlistStyle = Self.parseKeyValues(texts["pledit.txt"] ?? "")
+    }
+
+    /// A pledit.txt color ("#00FF00"), or `fallback`.
+    func playlistColor(_ key: String, _ fallback: Color) -> Color {
+        guard let hex = playlistStyle[key]?.trimmingCharacters(in: CharacterSet(charactersIn: "# ")),
+              hex.count >= 6, let v = UInt32(hex.prefix(6), radix: 16) else { return fallback }
+        return Color(red: Double(v >> 16 & 0xFF) / 255, green: Double(v >> 8 & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
     }
 
     /// A w×h piece of a sheet, or nil when the skin does not have it.
@@ -81,6 +91,17 @@ final class ClassicSkin {
         [41, 206, 16], [50, 190, 16], [57, 181, 16], [49, 156, 8], [41, 148, 0], [24, 132, 8],
         [255, 255, 255], [214, 214, 222], [181, 189, 189], [160, 170, 175], [148, 156, 165], [150, 150, 150],
     ]
+
+    /// "Key=Value" lines; keys lower-cased.
+    nonisolated static func parseKeyValues(_ text: String) -> [String: String] {
+        var out: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            out[line[..<eq].trimmingCharacters(in: .whitespaces).lowercased()] =
+                line[line.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+        }
+        return out
+    }
 
     /// The [Normal] section: `NumPoints` (the point count of each polygon) and `PointList`
     /// (x,y pairs). No polygons means a plain rectangle.
@@ -163,6 +184,8 @@ struct ClassicMainWindow: View {
     @ObservedObject private var player: PlayerState
     @AppStorage("player.skin") private var skinKey = "platter"
     @State private var peaks = PeakHold()
+    @AppStorage("classic.eq") private var showEQ = false
+    @AppStorage("classic.pl") private var showPL = false
     static let scale: CGFloat = 2
 
     init(model: PlayerAppModel, skin: ClassicSkin) {
@@ -172,8 +195,17 @@ struct ClassicMainWindow: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            main
+            if showEQ { ClassicEQWindow(skin: skin, player: player, shown: $showEQ) }
+            if showPL { ClassicPlaylistWindow(skin: skin, player: player, shown: $showPL) }
+        }
+        .onAppear { model.engine.playerViz.enabled = true }
+    }
+
+    private var main: some View {
         let s = Self.scale
-        ZStack(alignment: .topLeading) {
+        return ZStack(alignment: .topLeading) {
             // Clicks on the artwork fall through to the drag area and move the window.
             WindowDragArea()
             Group {
@@ -205,18 +237,22 @@ struct ClassicMainWindow: View {
             button("cbuttons", 92, 0, 92, 18, 22, 18, at: 108, 88, "Next") { player.next() }
             button("cbuttons", 114, 0, 114, 16, 22, 16, at: 136, 89, "Full player (library)") { skinKey = "platter" }
 
-            // Shuffle, repeat, and the EQ and playlist toggles (both open the full player).
+            // Shuffle, repeat, and the EQ and playlist windows.
             let shuffle = player.prefs.shuffle ? 30 : 0, rep = player.prefs.repeatMode != .off ? 30 : 0
             button("shufrep", 28, shuffle, 28, shuffle + 15, 47, 15, at: 164, 89, "Shuffle") { player.prefs.shuffle.toggle() }
             button("shufrep", 0, rep, 0, rep + 15, 28, 15, at: 210, 89,
                    player.prefs.repeatMode == .one ? "Repeat one" : "Repeat") {
                 player.prefs.repeatMode = player.prefs.repeatMode.next
             }
-            button("shufrep", 0, 61, 46, 61, 23, 12, at: 219, 58, "Equalizer (full player)") { skinKey = "platter" }
-            button("shufrep", 23, 61, 69, 61, 23, 12, at: 242, 58, "Playlist (full player)") { skinKey = "platter" }
+            let eq = showEQ ? 73 : 61, pl = showPL ? 73 : 61
+            button("shufrep", 0, eq, 46, eq, 23, 12, at: 219, 58, "Equalizer") { showEQ.toggle() }
+            button("shufrep", 23, pl, 69, pl, 23, 12, at: 242, 58, "Playlist") { showPL.toggle() }
 
             ClassicSlider(skin: skin, kind: .volume, value: $player.prefs.volume)
                 .frame(width: 68 * s, height: 13 * s).offset(x: 107 * s, y: 57 * s)
+            ClassicSlider(skin: skin, kind: .balance, value: Binding(
+                get: { (player.prefs.balance + 1) / 2 }, set: { player.prefs.balance = abs($0 - 0.5) < 0.04 ? 0 : $0 * 2 - 1 }))
+                .frame(width: 38 * s, height: 13 * s).offset(x: 177 * s, y: 57 * s)
             ClassicSlider(skin: skin, kind: .position, value: Binding(
                 get: { player.duration > 0 ? player.position / player.duration : 0 },
                 set: { player.seek(to: $0 * player.duration) }), live: player.isPlaying, enabled: player.current != nil)
@@ -234,9 +270,6 @@ struct ClassicMainWindow: View {
         draw(&ctx, skin.sprite("playpaus", state, 0, 9, 9), 26, 28, 9, 9)
         draw(&ctx, skin.sprite("monoster", 0, player.isPlaying ? 0 : 12, 29, 12), 239, 41, 29, 12)
         draw(&ctx, skin.sprite("monoster", 29, 12, 27, 12), 212, 41, 27, 12)
-        // Balance has no control in Platter: drawn centered.
-        draw(&ctx, skin.sprite("balance", 9, 0, 38, 13), 177, 57, 38, 13)
-        draw(&ctx, skin.sprite("balance", 15, 422, 14, 11), 189, 58, 14, 11)
 
         if player.current != nil {
             let t = max(0, Int(player.position))
@@ -294,13 +327,28 @@ struct ClassicMainWindow: View {
     /// A sprite button: the normal sprite at (nx, ny), the pressed one at (px, py).
     private func button(_ sheet: String, _ nx: Int, _ ny: Int, _ px: Int, _ py: Int, _ w: Int, _ h: Int,
                         at x: CGFloat, _ y: CGFloat, _ label: String, action: @escaping () -> Void) -> some View {
-        let s = Self.scale
-        return Button(action: action) { EmptyView() }
-            .buttonStyle(SpriteButtonStyle(normal: skin.sprite(sheet, nx, ny, w, h), pressed: skin.sprite(sheet, px, py, w, h)))
-            .frame(width: CGFloat(w) * s, height: CGFloat(h) * s)
-            .offset(x: x * s, y: y * s)
-            .help(label)
-            .accessibilityLabel(label)
+        spriteButton(skin.sprite(sheet, nx, ny, w, h), skin.sprite(sheet, px, py, w, h), w, h, at: x, y, label, action: action)
+    }
+}
+
+/// A sprite button at (x, y) in skin pixels: the normal sprite, and the pressed one.
+private func spriteButton(_ normal: Image?, _ pressed: Image?, _ w: Int, _ h: Int, at x: CGFloat, _ y: CGFloat,
+                          _ label: String, action: @escaping () -> Void) -> some View {
+    let s = ClassicMainWindow.scale
+    return Button(action: action) { EmptyView() }
+        .buttonStyle(SpriteButtonStyle(normal: normal, pressed: pressed))
+        .frame(width: CGFloat(w) * s, height: CGFloat(h) * s)
+        .offset(x: x * s, y: y * s)
+        .help(label)
+        .accessibilityLabel(label)
+}
+
+/// Draws `text` in the skin's text.bmp font at (x, y) in skin pixels.
+@MainActor
+private func drawText(_ ctx: inout GraphicsContext, _ skin: ClassicSkin, _ text: String, _ x: CGFloat, _ y: CGFloat) {
+    for (i, c) in text.enumerated() {
+        let g = ClassicSkin.glyph(c)
+        if let img = skin.sprite("text", g.col * 5, g.row * 6, 5, 6) { ctx.draw(img, in: CGRect(x: x + CGFloat(i * 5), y: y, width: 5, height: 6)) }
     }
 }
 
@@ -319,7 +367,7 @@ private struct SpriteButtonStyle: ButtonStyle {
 
 /// The volume and position sliders, drawn from volume.bmp and posbar.bmp.
 private struct ClassicSlider: View {
-    enum Kind { case volume, position }
+    enum Kind { case volume, balance, position }
     let skin: ClassicSkin
     let kind: Kind
     @Binding var value: Double
@@ -329,7 +377,7 @@ private struct ClassicSlider: View {
 
     var body: some View {
         GeometryReader { geo in
-            let s = geo.size.width / (kind == .volume ? 68 : 248)
+            let s = geo.size.width / (kind == .volume ? 68 : kind == .balance ? 38 : 248)
             TimelineView(.animation(minimumInterval: 0.25, paused: !live || dragging != nil)) { t in
                 let _ = t.date
                 let v = min(1, max(0, dragging ?? value))
@@ -339,6 +387,10 @@ private struct ClassicSlider: View {
                         skin.sprite("volume", 0, Int((v * 27).rounded()) * 15, 68, 13)?.resizable()
                         skin.sprite("volume", dragging != nil ? 0 : 15, 422, 14, 11)?.resizable()
                             .frame(width: 14 * s, height: 11 * s).offset(x: v * 54 * s, y: 1 * s)
+                    case .balance:
+                        skin.sprite("balance", 9, Int((abs(v * 2 - 1) * 27).rounded()) * 15, 38, 13)?.resizable()
+                        skin.sprite("balance", dragging != nil ? 0 : 15, 422, 14, 11)?.resizable()
+                            .frame(width: 14 * s, height: 11 * s).offset(x: v * 24 * s, y: 1 * s)
                     case .position:
                         skin.sprite("posbar", 0, 0, 248, 10)?.resizable()
                         if enabled {
@@ -353,7 +405,7 @@ private struct ClassicSlider: View {
                 .onChanged { g in
                     guard enabled else { return }
                     dragging = min(1, max(0, g.location.x / geo.size.width))
-                    if kind == .volume, let d = dragging { value = d }
+                    if kind != .position, let d = dragging { value = d }
                 }
                 .onEnded { _ in
                     if let d = dragging { value = d }
@@ -361,7 +413,194 @@ private struct ClassicSlider: View {
                 })
         }
         .accessibilityElement()
-        .accessibilityLabel(kind == .volume ? "Volume" : "Position")
+        .accessibilityLabel(kind == .volume ? "Volume" : kind == .balance ? "Balance" : "Position")
         .accessibilityValue("\(Int(value * 100))%")
+    }
+}
+
+// MARK: Equalizer window
+
+/// The classic EQ window (eqmain.bmp): on, presets, the curve, preamp, and 10 bands.
+private struct ClassicEQWindow: View {
+    let skin: ClassicSkin
+    @ObservedObject var player: PlayerState
+    @Binding var shown: Bool
+
+    var body: some View {
+        let s = ClassicMainWindow.scale
+        let on = player.prefs.eqOn ? 69 : 10
+        ZStack(alignment: .topLeading) {
+            WindowDragArea()
+            Group {
+                skin.sprite("eqmain", 0, 0, 275, 116)?.resizable()
+                skin.sprite("eqmain", 0, 134, 275, 14)?.resizable().frame(width: 275 * s, height: 14 * s)
+                Canvas { ctx, _ in
+                    ctx.scaleBy(x: s, y: s)
+                    graph(&ctx)
+                }
+            }
+            .allowsHitTesting(false)
+            spriteButton(skin.sprite("eqmain", on, 119, 26, 12), skin.sprite("eqmain", on + 118, 119, 26, 12), 26, 12,
+                         at: 14, 18, "Equalizer on") { player.prefs.eqOn.toggle() }
+            Menu {
+                ForEach(PlayerEQ.presets, id: \.name) { p in
+                    Button(p.name) { player.prefs.eqGains = p.gains; player.prefs.eqOn = true }
+                }
+                Divider()
+                Button("Reset") { player.prefs.eqGains = PlayerEQ.presets[0].gains; player.prefs.preamp = 0 }
+            } label: {
+                skin.sprite("eqmain", 224, 164, 44, 12)?.resizable()
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .frame(width: 44 * s, height: 12 * s)
+            .offset(x: 217 * s, y: 18 * s)
+            .help("Presets")
+            spriteButton(nil, skin.sprite("eqmain", 0, 125, 9, 9), 9, 9, at: 264, 3, "Close equalizer") { shown = false }
+            ClassicEQSlider(skin: skin, value: $player.prefs.preamp, label: "Preamp")
+                .frame(width: 14 * s, height: 63 * s).offset(x: 21 * s, y: 38 * s)
+            ForEach(0..<PlayerEQ.frequencies.count, id: \.self) { i in
+                ClassicEQSlider(skin: skin, value: Binding(get: { player.prefs.eqGains[i] }, set: { player.prefs.eqGains[i] = $0 }),
+                                label: "\(PlayerEQ.labels[i]) Hz")
+                    .frame(width: 14 * s, height: 63 * s).offset(x: CGFloat(78 + i * 18) * s, y: 38 * s)
+            }
+        }
+        .frame(width: 275 * s, height: 116 * s)
+    }
+
+    /// The response graph: preamp line, then the band gains joined, each pixel colored from
+    /// the skin's line color strip.
+    private func graph(_ ctx: inout GraphicsContext) {
+        guard let bg = skin.sprite("eqmain", 0, 294, 113, 19) else { return }
+        ctx.draw(bg, in: CGRect(x: 86, y: 17, width: 113, height: 19))
+        let yOf = { (db: Double) in Int((9 - db / 12 * 9).rounded()) }
+        if let line = skin.sprite("eqmain", 0, 314, 113, 1) {
+            ctx.draw(line, in: CGRect(x: 86, y: 17 + CGFloat(yOf(player.prefs.preamp)), width: 113, height: 1))
+        }
+        let g = player.prefs.eqGains
+        for x in 0..<113 {
+            let t = Double(x) / 112 * Double(g.count - 1), i = min(g.count - 2, Int(t))
+            let y = min(18, max(0, yOf(g[i] + (g[i + 1] - g[i]) * (t - Double(i)))))
+            if let px = skin.sprite("eqmain", 115, 294 + y, 1, 1) {
+                ctx.draw(px, in: CGRect(x: 86 + CGFloat(x), y: 17 + CGFloat(y), width: 1, height: 1))
+            }
+        }
+    }
+}
+
+/// One EQ slider, -12 ... +12 dB; drag up or down, double-click for 0 dB.
+private struct ClassicEQSlider: View {
+    let skin: ClassicSkin
+    @Binding var value: Double
+    let label: String
+    @State private var dragging = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let s = geo.size.height / 63
+            let f = (min(12, max(-12, value)) + 12) / 24
+            let frame = Int((f * 27).rounded())
+            ZStack(alignment: .topLeading) {
+                skin.sprite("eqmain", 13 + frame % 14 * 15, 164 + frame / 14 * 65, 14, 63)?.resizable()
+                skin.sprite("eqmain", 0, dragging ? 176 : 164, 11, 11)?.resizable()
+                    .frame(width: 11 * s, height: 11 * s).offset(x: 1 * s, y: (1 - f) * 51 * s)
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { g in
+                    dragging = true
+                    let v = (1 - min(1, max(0, (g.location.y - 5.5 * s) / (51 * s)))) * 24 - 12
+                    value = abs(v) < 0.6 ? 0 : (v * 2).rounded() / 2
+                }
+                .onEnded { _ in dragging = false })
+            .onTapGesture(count: 2) { value = 0 }
+        }
+        .help(label)
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityValue(String(format: "%+.1f dB", value))
+        .accessibilityAdjustableAction { d in value = min(12, max(-12, value + (d == .increment ? 1 : -1))) }
+    }
+}
+
+// MARK: Playlist window
+
+/// The classic playlist window (pledit.bmp frame, pledit.txt colors): the queue, the current
+/// track marked, double-click to play, and the running time.
+private struct ClassicPlaylistWindow: View {
+    let skin: ClassicSkin
+    @ObservedObject var player: PlayerState
+    @Binding var shown: Bool
+    @State private var selected: Int?
+    static let rows = 4 // middle tiles of 29 px
+
+    var body: some View {
+        let s = ClassicMainWindow.scale
+        let h = CGFloat(20 + Self.rows * 29 + 38)
+        ZStack(alignment: .topLeading) {
+            WindowDragArea()
+            Canvas { ctx, _ in
+                ctx.scaleBy(x: s, y: s)
+                frame(&ctx, height: h)
+            }
+            .allowsHitTesting(false)
+            list
+                .frame(width: 243 * s, height: CGFloat(Self.rows * 29) * s)
+                .background(skin.playlistColor("normalbg", .black))
+                .offset(x: 12 * s, y: 20 * s)
+            spriteButton(nil, skin.sprite("pledit", 52, 42, 9, 9), 9, 9, at: 264, 3, "Close playlist") { shown = false }
+        }
+        .frame(width: 275 * s, height: h * s)
+    }
+
+    private var list: some View {
+        let s = ClassicMainWindow.scale
+        let font = Font.custom(skin.playlistStyle["font"] ?? "Arial", size: 9 * s)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(player.queue.enumerated()), id: \.offset) { i, entry in
+                        HStack(spacing: 4) {
+                            Text("\(i + 1). \(entry.track.artist.isEmpty ? "" : entry.track.artist + " - ")\(entry.track.title)")
+                                .lineLimit(1)
+                            Spacer(minLength: 4)
+                            Text(entry.track.duration.map(formatTime) ?? "")
+                        }
+                        .font(font)
+                        .foregroundColor(i == player.currentIndex ? skin.playlistColor("current", .white)
+                                                                  : skin.playlistColor("normal", .green))
+                        .padding(.horizontal, 2 * s)
+                        .frame(height: 13 * s)
+                        .background(i == selected ? skin.playlistColor("selectedbg", .blue) : .clear)
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) { player.play(index: i) }
+                        .onTapGesture { selected = i }
+                        .id(i)
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+            .onChange(of: player.currentIndex) { _, i in if let i { withAnimation { proxy.scrollTo(i) } } }
+        }
+    }
+
+    /// The tiled frame, and the running time in the bottom bar.
+    private func frame(_ ctx: inout GraphicsContext, height h: CGFloat) {
+        func put(_ x: Int, _ y: Int, _ w: Int, _ hh: Int, at px: CGFloat, _ py: CGFloat) {
+            if let img = skin.sprite("pledit", x, y, w, hh) { ctx.draw(img, in: CGRect(x: px, y: py, width: CGFloat(w), height: CGFloat(hh))) }
+        }
+        put(0, 0, 25, 20, at: 0, 0)
+        for x in stride(from: 25, to: 250, by: 25) { put(127, 0, 25, 20, at: CGFloat(x), 0) }
+        put(26, 0, 100, 20, at: 87, 0)
+        put(153, 0, 25, 20, at: 250, 0)
+        for r in 0..<Self.rows {
+            put(0, 42, 12, 29, at: 0, CGFloat(20 + r * 29))
+            put(31, 42, 20, 29, at: 255, CGFloat(20 + r * 29))
+        }
+        put(0, 72, 125, 38, at: 0, h - 38)
+        put(126, 72, 150, 38, at: 125, h - 38)
+        let elapsed = player.queue.prefix(player.currentIndex ?? 0).reduce(0) { $0 + ($1.track.duration ?? 0) }
+        drawText(&ctx, skin, "\(formatTime(elapsed))/\(formatTime(player.totalDuration))", 132, h - 28)
     }
 }

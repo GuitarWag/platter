@@ -33,16 +33,45 @@ enum Skin: Hashable {
     }
 }
 
-/// The player window: shows the chosen skin and shapes the window for it.
+/// The player window. A shaped skin needs a borderless window: a titled one gets the
+/// system frame (on macOS 26, a glass edge) around the artwork. A borderless SwiftUI window
+/// cannot become key, so this window is AppKit and says it can.
+final class PlayerWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+
+    convenience init(model: PlayerAppModel) {
+        let host = NSHostingController(rootView: PlayerWindowView(model: model))
+        host.sizingOptions = [.minSize, .maxSize] // the skin sets the window size
+        self.init(contentViewController: host)
+        title = "Platter Player"
+        isReleasedWhenClosed = false
+        isMovableByWindowBackground = true
+        setFrameAutosaveName("PlatterPlayer")
+    }
+
+    /// Shaped: borderless and clear, moved by dragging the artwork. Platter: a normal window
+    /// with the content under a hidden title bar.
+    func apply(shaped: Bool) {
+        styleMask = shaped ? [.miniaturizable, .fullSizeContentView]
+                           : [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        titleVisibility = .hidden
+        titlebarAppearsTransparent = true
+        isOpaque = !shaped
+        backgroundColor = shaped ? .clear : NSColor(white: 0.1, alpha: 1)
+        hasShadow = true
+        DispatchQueue.main.async { self.invalidateShadow() } // the shadow follows the new shape
+    }
+}
+
+/// The player window's content: the chosen skin, and errors on top.
 struct PlayerWindowView: View {
-    let model: PlayerAppModel
+    @ObservedObject var model: PlayerAppModel
     @AppStorage("player.skin") private var skinKey = "platter"
-    @State private var window: NSWindow?
 
     var body: some View {
-        let skin = Skin(key: skinKey)
         Group {
-            switch skin {
+            switch Skin(key: skinKey) {
             case .platter:
                 PlatterSkinView(model: model)
             case .pod(let palette):
@@ -51,29 +80,15 @@ struct PlayerWindowView: View {
                 ClassicSkinView(model: model, file: file)
             }
         }
-        .background(WindowAccessor { w in
-            model.playerWindow = w
-            window = w
-            if let w { Self.style(w, shaped: skin.isShaped) }
-        })
-        .onChange(of: skinKey) { _, key in
-            if let window { Self.style(window, shaped: Skin(key: key).isShaped) }
+        .overlay(alignment: .top) {
+            if let e = model.error {
+                Text(e).font(.system(size: 11)).foregroundColor(.white).padding(6)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color.red.opacity(0.85)))
+                    .onTapGesture { model.error = nil }
+            }
         }
+        .onChange(of: skinKey) { _, key in model.playerWindow?.apply(shaped: Skin(key: key).isShaped) }
         .preferredColorScheme(.dark)
-    }
-
-    /// A shaped skin gets a clear, frameless-looking window that moves by dragging its body;
-    /// the Platter skin gets the normal window back.
-    static func style(_ w: NSWindow, shaped: Bool) {
-        w.isOpaque = !shaped
-        w.backgroundColor = shaped ? .clear : NSColor(white: 0.1, alpha: 1)
-        w.isMovableByWindowBackground = true
-        w.titlebarAppearsTransparent = true
-        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            w.standardWindowButton(b)?.isHidden = shaped
-        }
-        w.hasShadow = true
-        DispatchQueue.main.async { w.invalidateShadow() } // the shadow follows the new shape
     }
 }
 

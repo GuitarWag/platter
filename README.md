@@ -141,9 +141,10 @@ starts").
 - **Skins** (Skins menu): Platter (the panels above); Chrome and Ruby, shaped skins in the
   style of the year 2000; and classic Winamp 2 skins. Get `.wsz` files from
   [skins.webamp.org](https://skins.webamp.org) and add them with Skins → Add Classic Skin.
-  A classic skin draws the main window (time, title, spectrum, sliders, transport, shuffle,
-  repeat); its EQ and PL buttons open the Platter skin. Platter ships no classic skins: they
-  are the artwork of their authors.
+  A classic skin draws the main window (time, title, spectrum, volume, balance, seek,
+  transport, shuffle, repeat), and its EQ and PL buttons dock the skin's equalizer and
+  playlist windows below it. Platter ships no classic skins: they are the artwork of their
+  authors. Shaped skins use a borderless window; drag the artwork to move it.
 
 From the DJ library, right-click a track → Platter Player to play it, play it next, or queue
 it. Tracks have ratings (right-click → Rating) and play counts; smart albums can filter on
